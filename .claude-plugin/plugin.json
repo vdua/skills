@@ -1,0 +1,11 @@
+{
+  "name": "vdua-skills",
+  "description": "Personal skills plugin: AEM Operational Telemetry (RUM) querying and JavaScript error analysis",
+  "version": "1.0.0",
+  "author": {
+    "name": "vdua"
+  },
+  "repository": "https://github.com/vdua/skills",
+  "license": "MIT",
+  "keywords": ["rum", "telemetry", "optel", "analytics", "error-analysis"]
+}
