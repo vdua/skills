@@ -1,10 +1,10 @@
 // src/optel-analyze-errors/main.js
 var rawFs = require("fs");
-var fs = rawFs.promises || rawFs;
+var fsAsync = rawFs.promises || rawFs;
 async function pathExists(p) {
-  if (typeof fs.exists === "function") return fs.exists(p);
+  if (typeof fsAsync.exists === "function") return fsAsync.exists(p);
   try {
-    await fs.stat(p);
+    await fsAsync.stat(p);
     return true;
   } catch {
     return false;
@@ -13,9 +13,9 @@ async function pathExists(p) {
 async function ensureDir(dir) {
   if (await pathExists(dir)) return;
   try {
-    await fs.mkdir(dir, { recursive: true });
+    await fsAsync.mkdir(dir, { recursive: true });
   } catch {
-    await fs.mkdir(dir);
+    await fsAsync.mkdir(dir);
   }
 }
 function extractErrorType(errorStr) {
@@ -458,7 +458,7 @@ async function main() {
   console.log("");
   try {
     console.log("Loading error data...");
-    const errorData = JSON.parse(String(await fs.readFile(inputFile)));
+    const errorData = JSON.parse(String(await fsAsync.readFile(inputFile)));
     if (!errorData.result || !errorData.result.facetValues) {
       console.error("Error: Invalid input file format. Expected structure: { result: { facetValues: [...] } }");
       process.exit(1);
@@ -544,7 +544,7 @@ async function main() {
       errors: similarityResults
     };
     const detailedFile = `${baseOutputPath}-similarity-analysis.json`;
-    await fs.writeFile(detailedFile, JSON.stringify(detailedOutput, null, 2));
+    await fsAsync.writeFile(detailedFile, JSON.stringify(detailedOutput, null, 2));
     console.log(`\u2705 Detailed analysis saved to: ${detailedFile}`);
     const simplifiedOutput = similarityResults.map((r) => ({
       error: r.error,
@@ -567,7 +567,7 @@ async function main() {
       }))
     }));
     const simplifiedFile = `${baseOutputPath}-similarity-simplified.json`;
-    await fs.writeFile(simplifiedFile, JSON.stringify(simplifiedOutput, null, 2));
+    await fsAsync.writeFile(simplifiedFile, JSON.stringify(simplifiedOutput, null, 2));
     console.log(`\u2705 Simplified view saved to: ${simplifiedFile}`);
     const fileGroups = {};
     similarityResults.forEach((error) => {
@@ -600,7 +600,7 @@ async function main() {
       fileGroups
     };
     const fileGroupedFile = `${baseOutputPath}-similarity-by-file.json`;
-    await fs.writeFile(fileGroupedFile, JSON.stringify(fileGroupedOutput, null, 2));
+    await fsAsync.writeFile(fileGroupedFile, JSON.stringify(fileGroupedOutput, null, 2));
     console.log(`\u2705 File-grouped errors saved to: ${fileGroupedFile}`);
     console.log("");
     console.log("=".repeat(80));
@@ -614,9 +614,7 @@ async function main() {
     process.exit(1);
   }
 }
-(async () => {
-  await main();
-})().catch((err) => {
+return main().catch((err) => {
   console.error(err.message);
   if (err.stack) console.error(err.stack);
   process.exit(1);

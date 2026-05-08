@@ -25,8 +25,10 @@ User Question → [1] Parse → [2] Build Query → [3] Execute → [4] Analyze 
 
 ## Running the Script
 
-**SLICC:** `optel-query.jsh <domain> <startDate> <endDate> [options]`
-**Claude Code:** `optel-query.jsh <domain> <startDate> <endDate> [options]`
+**Detect environment first** — `command -v optel-query` exits 0 in SLICC (registered by basename, no extension); exits 1 in Claude Code / plain Node.
+
+**SLICC:** `optel-query <domain> <startDate> <endDate> [options]`
+**Node:**  `node skills/optel-query/scripts/optel-query.jsh <domain> <startDate> <endDate> [options]`
 
 Pass `--domainkey <key>` to supply a domain key directly, bypassing `DOMAINKEY_FILE` and `RUM_ADMIN_KEY` lookup. Useful when a key is already known (e.g. `"open"` for public domains) or when env vars are unavailable.
 

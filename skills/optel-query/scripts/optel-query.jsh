@@ -7,11 +7,11 @@ var __commonJS = (cb, mod) => function __require() {
 var require_domainkey = __commonJS({
   "src/optel-query/domainkey.js"(exports2, module2) {
     var rawFs2 = require("fs");
-    var fs2 = rawFs2.promises || rawFs2;
+    var fsAsync2 = rawFs2.promises || rawFs2;
     async function readDomainkeyFile() {
       if (!process.env.DOMAINKEY_FILE) return null;
       try {
-        const contents = String(await fs2.readFile(process.env.DOMAINKEY_FILE));
+        const contents = String(await fsAsync2.readFile(process.env.DOMAINKEY_FILE));
         return JSON.parse(contents);
       } catch (e) {
         return null;
@@ -21,12 +21,12 @@ var require_domainkey = __commonJS({
       if (!process.env.DOMAINKEY_FILE) return;
       let existing = {};
       try {
-        const contents = String(await fs2.readFile(process.env.DOMAINKEY_FILE));
+        const contents = String(await fsAsync2.readFile(process.env.DOMAINKEY_FILE));
         existing = JSON.parse(contents);
       } catch (e) {
       }
       existing[domain] = domainkey;
-      await fs2.writeFile(process.env.DOMAINKEY_FILE, JSON.stringify(existing, null, 2));
+      await fsAsync2.writeFile(process.env.DOMAINKEY_FILE, JSON.stringify(existing, null, 2));
     }
     async function fetchDomainKey(domain, override) {
       if (override) return override;
@@ -411,7 +411,7 @@ var require_query = __commonJS({
 
 // src/optel-query/cli.js
 var rawFs = require("fs");
-var fs = rawFs.promises || rawFs;
+var fsAsync = rawFs.promises || rawFs;
 var { query, getFacetValues } = require_query();
 var VALID_INTERVALS = ["hourly", "daily", "monthly"];
 function parseArgs() {
@@ -581,8 +581,8 @@ async function main() {
     const output = JSON.stringify({ result }, null, 2);
     if (config.output) {
       const lastSlash = config.output.lastIndexOf("/");
-      if (lastSlash > 0) await fs.mkdir(config.output.slice(0, lastSlash), { recursive: true });
-      await fs.writeFile(config.output, output);
+      if (lastSlash > 0) await fsAsync.mkdir(config.output.slice(0, lastSlash), { recursive: true });
+      await fsAsync.writeFile(config.output, output);
       console.log(`Results written to: ${config.output}`);
     } else {
       console.log(output);
@@ -597,9 +597,7 @@ async function main() {
     process.exit(1);
   }
 }
-(async () => {
-  await main();
-})().catch((err) => {
+return main().catch((err) => {
   console.error(err.message);
   if (err.stack) console.error(err.stack);
   process.exit(1);

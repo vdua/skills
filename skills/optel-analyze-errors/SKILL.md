@@ -23,8 +23,12 @@ The skill receives a **file path** pointing to a JSON file containing error data
   - Handles cross-browser error format differences
   - Can be executed directly:
     ```bash
-    # SLICC / Claude Code
-    improved-error-similarity.jsh <input-file> <output-prefix>
+    # Detect: command -v improved-error-similarity exits 0 in SLICC, 1 in Node
+    # SLICC
+    improved-error-similarity <input-file> <output-prefix>
+
+    # Node
+    node skills/optel-analyze-errors/scripts/improved-error-similarity.jsh <input-file> <output-prefix>
     ```
 
 
@@ -121,7 +125,8 @@ All outputs are saved to the `output/` directory.
 ```
 Input File → Run Utility → Generate Analysis Reports
                 ↓
-    node improved-error-similarity.jsh <input-file> <output-prefix>
+    improved-error-similarity <input-file> <output-prefix>   # SLICC
+    node skills/optel-analyze-errors/scripts/improved-error-similarity.jsh <input-file> <output-prefix>   # Node
                 ↓
     [output-prefix]-similarity-analysis.json
     [output-prefix]-similarity-simplified.json
@@ -140,9 +145,12 @@ Input File → Run Utility → Generate Analysis Reports
 
 The skill receives a **file path** (e.g., `output/errors-jan26-2026.json`) containing error data from RUM queries.
 
-**Run the utility**:
+**Run the utility** (`command -v improved-error-similarity` exits 0 in SLICC, 1 in Node):
 ```bash
-improved-error-similarity.jsh <input-file> <output-prefix> [--threshold 0.6]
+# SLICC
+improved-error-similarity <input-file> <output-prefix> [--threshold 0.6]
+# Node
+node skills/optel-analyze-errors/scripts/improved-error-similarity.jsh <input-file> <output-prefix> [--threshold 0.6]
 ```
 
 **Parameters**:
@@ -152,11 +160,13 @@ improved-error-similarity.jsh <input-file> <output-prefix> [--threshold 0.6]
 
 **Example**:
 ```bash
-# Output files land in output/my-run/ alongside the input
-improved-error-similarity.jsh output/my-run/errors.json errors-analysis
+# SLICC — output files land in output/my-run/ alongside the input
+improved-error-similarity output/my-run/errors.json errors-analysis
+improved-error-similarity output/my-run/errors.json errors-analysis --threshold 0.7
 
-# With custom threshold
-improved-error-similarity.jsh output/my-run/errors.json errors-analysis --threshold 0.7
+# Node
+node skills/optel-analyze-errors/scripts/improved-error-similarity.jsh output/my-run/errors.json errors-analysis
+node skills/optel-analyze-errors/scripts/improved-error-similarity.jsh output/my-run/errors.json errors-analysis --threshold 0.7
 ```
 
 **What the utility does**:
@@ -281,7 +291,7 @@ Contains:
 
 ## Key Takeaways
 
-1. ✅ **Execute** `improved-error-similarity.jsh` as a command-line utility
+1. ✅ **Execute** `improved-error-similarity` (SLICC) or `node skills/optel-analyze-errors/scripts/improved-error-similarity.jsh` (Node) — detect with `command -v improved-error-similarity`
 2. ✅ **Provide** input file path and output prefix as arguments
 3. ✅ **Use** `--threshold` flag to adjust similarity sensitivity (default: 0.6)
 4. ✅ **Review** all three generated output files for comprehensive analysis
