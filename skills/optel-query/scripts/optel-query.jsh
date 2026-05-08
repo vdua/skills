@@ -8,25 +8,60 @@ var require_domainkey = __commonJS({
   "src/optel-query/domainkey.js"(exports2, module2) {
     var rawFs2 = require("fs");
     var fsAsync2 = rawFs2.promises || rawFs2;
+    var DEFAULT_DOMAINKEY_FILE = "/optel/domainkey.json";
     async function readDomainkeyFile() {
-      if (!process.env.DOMAINKEY_FILE) return null;
+      const filePath = process.env.DOMAINKEY_FILE || DEFAULT_DOMAINKEY_FILE;
       try {
-        const contents = String(await fsAsync2.readFile(process.env.DOMAINKEY_FILE));
+        const contents = String(await fsAsync2.readFile(filePath));
         return JSON.parse(contents);
       } catch (e) {
         return null;
       }
     }
     async function writeDomainkeyFile(domain, domainkey) {
-      if (!process.env.DOMAINKEY_FILE) return;
+      const filePath = process.env.DOMAINKEY_FILE || DEFAULT_DOMAINKEY_FILE;
       let existing = {};
       try {
-        const contents = String(await fsAsync2.readFile(process.env.DOMAINKEY_FILE));
+        const contents = String(await fsAsync2.readFile(filePath));
         existing = JSON.parse(contents);
       } catch (e) {
       }
       existing[domain] = domainkey;
-      await fsAsync2.writeFile(process.env.DOMAINKEY_FILE, JSON.stringify(existing, null, 2));
+      try {
+        await fsAsync2.writeFile(filePath, JSON.stringify(existing, null, 2));
+      } catch (e) {
+      }
+    }
+    async function pathExists(p) {
+      try {
+        await fsAsync2.stat(p);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    async function saveDomainKey2(domain, key) {
+      let filePath;
+      if (process.env.DOMAINKEY_FILE) {
+        filePath = process.env.DOMAINKEY_FILE;
+        const lastSlash = filePath.lastIndexOf("/");
+        const parentDir = lastSlash > 0 ? filePath.slice(0, lastSlash) : null;
+        if (!await pathExists(filePath) && !(parentDir && await pathExists(parentDir))) {
+          throw new Error(`DOMAINKEY_FILE is set to "${filePath}" but that path does not exist. Unset it or create the directory first.`);
+        }
+      } else {
+        filePath = DEFAULT_DOMAINKEY_FILE;
+        await fsAsync2.mkdir(filePath.slice(0, filePath.lastIndexOf("/")), { recursive: true });
+      }
+      let existing = {};
+      try {
+        const contents = String(await fsAsync2.readFile(filePath));
+        existing = JSON.parse(contents);
+      } catch (e) {
+      }
+      existing[domain] = key;
+      await fsAsync2.writeFile(filePath, JSON.stringify(existing, null, 2));
+      return filePath;
     }
     async function fetchDomainKey(domain, override) {
       if (override) return override;
@@ -68,7 +103,7 @@ var require_domainkey = __commonJS({
         throw new Error("Error Getting Domain Key: " + e.message);
       }
     }
-    module2.exports = { fetchDomainKey };
+    module2.exports = { fetchDomainKey, saveDomainKey: saveDomainKey2 };
   }
 });
 
@@ -378,7 +413,7 @@ var require_query = __commonJS({
         const totals = dataChunks.totals;
         out.series = {};
         for (const name of series) {
-          if (totals[name] != null) out.series[name] = seriesValues[name](totals[name]);
+          if (totals[name] != null && seriesValues[name]) out.series[name] = seriesValues[name](totals[name]);
         }
       }
       return out;
@@ -398,7 +433,7 @@ var require_query = __commonJS({
         const row = { value: facet.value, count: facet.weight, samplingRatios };
         if (series) {
           series.forEach((name) => {
-            row[name] = seriesValues[name](facet.metrics[name]);
+            if (seriesValues[name]) row[name] = seriesValues[name](facet.metrics[name]);
           });
         }
         return row;
@@ -413,6 +448,7 @@ var require_query = __commonJS({
 var rawFs = require("fs");
 var fsAsync = rawFs.promises || rawFs;
 var { query, getFacetValues } = require_query();
+var { saveDomainKey } = require_domainkey();
 var VALID_INTERVALS = ["hourly", "daily", "monthly"];
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -479,11 +515,18 @@ optel-query CLI
 
 Usage:
   optel-query.jsh <domain> <startDate> <endDate> [options]
+  optel-query.jsh add-domain-key <domain> <key>
 
 Arguments:
   domain       Domain to query (e.g., 'example.com')
   startDate    Start date in YYYY-MM-DD format
   endDate      End date in YYYY-MM-DD format
+
+Subcommands:
+  add-domain-key <domain> <key>
+                Save a domain key to the local key store (/optel/domainkey.json
+                or DOMAINKEY_FILE). Run this once from the terminal \u2014 the key
+                is stored on disk and never needs to appear in the chat.
 
 Options:
   --query <json>            Filter query as JSON, e.g. '{"url":["/home"]}'
@@ -544,6 +587,47 @@ Options:
   return config;
 }
 async function main() {
+  const args = process.argv.slice(2);
+  if (args[0] === "add-domain-key") {
+    if (args.includes("--help") || args.includes("-h")) {
+      console.log(`
+optel-query add-domain-key
+==========================
+
+Usage:
+  optel-query add-domain-key <domain> <key>
+
+Saves a domain key to the local key store so queries can run without
+passing --domainkey each time.
+
+  domain    Domain to store the key for (e.g. 'example.com')
+  key       The domain key value
+
+Key store location (in order of precedence):
+  1. DOMAINKEY_FILE env var (if set and path exists)
+  2. /optel/domainkey.json (SLICC VirtualFS default)
+
+In SLICC: run this from the terminal panel, not the chat window.
+The key is written to disk and never appears in conversation history.
+`);
+      process.exit(0);
+    }
+    const domain = args[1];
+    const key = args[2];
+    if (!domain || !key) {
+      console.error("Usage: optel-query add-domain-key <domain> <key>");
+      process.exit(1);
+    }
+    let filePath;
+    try {
+      filePath = await saveDomainKey(domain, key);
+    } catch (e) {
+      console.error(e.message);
+      process.exit(1);
+    }
+    console.log(`Saved domain key for "${domain}" to ${filePath}`);
+    return;
+  }
   const config = parseArgs();
   console.log("Fetching RUM data...");
   console.log(`Domain: ${config.domain}`);

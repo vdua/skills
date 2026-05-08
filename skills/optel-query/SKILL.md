@@ -30,7 +30,19 @@ User Question → [1] Parse → [2] Build Query → [3] Execute → [4] Analyze 
 **SLICC:** `optel-query <domain> <startDate> <endDate> [options]`
 **Node:**  `node skills/optel-query/scripts/optel-query.jsh <domain> <startDate> <endDate> [options]`
 
-Pass `--domainkey <key>` to supply a domain key directly, bypassing `DOMAINKEY_FILE` and `RUM_ADMIN_KEY` lookup. Useful when a key is already known (e.g. `"open"` for public domains) or when env vars are unavailable.
+Pass `--domainkey <key>` to supply a domain key directly, bypassing file and env var lookup. Useful when a key is already known (e.g. `"open"` for public domains).
+
+## Domain Key Setup
+
+The script looks up the domain key in this order: `--domainkey` flag → `DOMAINKEY_FILE` env var → `/optel/domainkey.json` (SLICC VirtualFS default) → `RUM_ADMIN_KEY` admin fetch.
+
+**If a query fails with a missing-key error in SLICC**, instruct the user to run this once from the **terminal panel** (not the chat):
+```sh
+optel-query add-domain-key <domain> <key>
+```
+This writes to `/optel/domainkey.json`, which persists across sessions. Do **not** ask the user to paste the key into the chat — that would expose it in conversation history.
+
+**Never read `/optel/domainkey.json` or any file referenced by `DOMAINKEY_FILE`** — doing so would pull live credentials into conversation context. The script reads these files itself at runtime.
 
 **Output shapes:**
 
