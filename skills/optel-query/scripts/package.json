@@ -1,0 +1,9 @@
+{
+  "name": "optel-query-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dependencies for optel-query.jsh when run under Node",
+  "dependencies": {
+    "@adobe/rum-distiller": "^1.0.0"
+  }
+}
