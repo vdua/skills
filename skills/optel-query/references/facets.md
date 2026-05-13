@@ -228,7 +228,39 @@ dataChunks.filter = {
 
 ---
 
-### 12. `viewmedia.target`
+### 12. `loadresource.target`
+**Combiner**: `some` | **Negative Support**: ❌ No
+
+**What it does**: Extracts the load time in milliseconds for each network resource loaded via the `loadresource` checkpoint. Values are strings (e.g. `"250"`, `"1200"`). Most meaningful when scoped to a specific resource via `loadresource.source` — otherwise load times from fast CSS files and slow JS bundles are mixed together, producing a distribution that is not actionable.
+
+**Distribution Example** (primary use case):
+```bash
+# Distribution of load times for a specific resource
+--query '{"checkpoint":["loadresource"],"loadresource.source":["https://example.com/scripts/heavy.js"]}' --facet-values loadresource.target
+```
+
+**Threshold Example** (which resources take more than 250ms to load):
+```bash
+# Step 1 — check what load time values exist across all resources
+--query '{"checkpoint":["loadresource"]}' --facet-values loadresource.target
+# Output: {"100": 42, "250": 18, "500": 7, "1200": 3}
+
+# Step 2 — filter to values above your threshold, then facet by source to see which resources are slow
+--query '{"checkpoint":["loadresource"],"loadresource.target":["500","1200"]}' --facet-values loadresource.source
+```
+**Note**: There is no `>250` operator — values are exact-matched strings. Pick the values above your threshold from step 1 and enumerate them in step 2.
+
+**Time-series Example** (load time distribution per day for a specific resource):
+```bash
+# See how load time distribution changes over the date range
+--query '{"checkpoint":["loadresource"],"loadresource.source":["https://example.com/scripts/heavy.js"]}' --facet-values period
+# Then drill into a specific day:
+--query '{"checkpoint":["loadresource"],"loadresource.source":["https://example.com/scripts/heavy.js"],"period":["2024-03-15"]}' --facet-values loadresource.target
+```
+
+---
+
+### 13. `viewmedia.target`
 **Combiner**: `some` | **Negative Support**: ❌ No
 
 **What it does**: Extracts URLs of viewed media (images/videos), cleaned of query parameters.
@@ -463,6 +495,7 @@ dataChunks.filter = {
 
 ### Resources
 - `loadresource.source` - Loaded resources (some)
+- `loadresource.target` - Load time of network resource in ms, e.g. `"250"` (some)
 - `missingresource.source` - Failed resource URLs (some)
 - `missingresource.target` - HTTP status of failed resources, e.g. `"404"`, `"405"` (some)
 
@@ -504,7 +537,7 @@ Checkpoint types observed in RUM data and their source/target semantics. Only th
 | `click` | CSS selector / idealized selector of clicked element | href or destination URL if link | `click.source` / `click.target` |
 | `viewblock` | Block class name or identifier (e.g. hero, features) | — | `viewblock.source` |
 | `viewmedia` | — | Media URL (image/video/audio), cleaned of query params | `viewmedia.target` |
-| `loadresource` | Resource URL (fragment, .json, .js, API) | Duration in ms (optional) | `loadresource.source` |
+| `loadresource` | Resource URL (fragment, .json, .js, API) | Duration in ms (optional) | `loadresource.source` / `loadresource.target` |
 | `missingresource` | Resource URL that failed to load | HTTP response status (e.g. 404) | `missingresource.source` / `missingresource.target` |
 | `fill` | CSS selector of form field that was filled | — | `fill.source` |
 | `formsubmit` | Form selector / identifier | Form action URL | checkpoint only |
@@ -540,9 +573,9 @@ Checkpoint types observed in RUM data and their source/target semantics. Only th
 
 ## Summary
 
-This skill defines **14 facets** for filtering RUM data:
+This skill defines **15 facets** for filtering RUM data:
 - **4 basic facets**: url, userAgent, checkpoint, error
-- **10 checkpoint-specific facets**: navigate.source, loadresource.source, click.source, click.target, viewblock.source, fill.source, viewmedia.target, missingresource.source, missingresource.target
+- **11 checkpoint-specific facets**: navigate.source, loadresource.source, loadresource.target, click.source, click.target, viewblock.source, fill.source, viewmedia.target, missingresource.source, missingresource.target
 
 **Facets with negative support** (can use `!facetName`): url, userAgent, checkpoint, error
 
