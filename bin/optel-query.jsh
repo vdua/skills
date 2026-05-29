@@ -71,7 +71,7 @@ var require_domainkey = __commonJS({
         const auth = process.env.RUM_ADMIN_KEY;
         if (!auth) {
           throw new Error(
-            `No domainkey found for "${domain}". Add it to domainkey.json in the current directory.`
+            `No domainkey found for "${domain}". Run: optel-query add-domain-key ${domain} <key>  \u2014 or pass --domainkey <key> directly.`
           );
         }
         let org;
@@ -328,6 +328,8 @@ var require_datachunks = __commonJS({
       dataChunks.addFacet("loadresource.source", checkpointSource("loadresource"), "some");
       dataChunks.addFacet("viewmedia.target", checkpointTarget("viewmedia"), "some", "never");
       dataChunks.addFacet("missingresource.source", checkpointSource("missingresource"), "some", "never");
+      const lrTargetRaw = checkpointTarget("loadresource");
+      dataChunks.addFacet("loadresource.target", (bundle) => (lrTargetRaw(bundle) || []).map(String), "some", "never");
       const mrTargetRaw = checkpointTarget("missingresource");
       dataChunks.addFacet("missingresource.target", (bundle) => (mrTargetRaw(bundle) || []).map(String), "some", "never");
       dataChunks.addFacet("period", (bundle) => [new Date(bundle.timeSlot).toISOString().slice(0, 10)], "some", "none");
@@ -474,6 +476,7 @@ Checkpoint-Specific Facets (source):
 Checkpoint-Specific Facets (target):
   click.target             - Click destination URL
   viewmedia.target         - Media viewed
+  loadresource.target      - Load time of network resource in ms (e.g. 250, 1200)
   missingresource.target   - HTTP status code of failed resource (e.g. 404, 405)
 
 Time:

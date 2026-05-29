@@ -36,10 +36,16 @@ Pass `--domainkey <key>` to supply a domain key directly, bypassing file and env
 
 The script looks up the domain key in this order: `--domainkey` flag → `DOMAINKEY_FILE` env var → `/optel/domainkey.json` (SLICC VirtualFS default) → `RUM_ADMIN_KEY` admin fetch.
 
-**If a query fails with a missing-key error in SLICC**, instruct the user to run this once from the **terminal panel** (not the chat):
-```sh
-optel-query add-domain-key <domain> <key>
-```
+1. **If the `optel-explorer` skill is installed** (check for `/workspace/skills/optel-explorer/SKILL.md`):
+   - Open the sprinkle: `sprinkle open optel-explorer`
+   - Tell the user: "The domain key for `<domain>` is missing. Use the OpTel Explorer panel to add it manually or generate one via Adobe."
+   - Read the `optel-explorer` SKILL.md and follow its bootstrap instructions if the scoop doesn't exist yet.
+
+2. **Otherwise**, instruct the user to run this once from the **terminal panel** (not the chat):
+   ```sh
+   optel-query add-domain-key <domain> <key>
+   ```
+
 This writes to `/optel/domainkey.json`, which persists across sessions. Do **not** ask the user to paste the key into the chat — that would expose it in conversation history.
 
 **Never read `/optel/domainkey.json` or any file referenced by `DOMAINKEY_FILE`** — doing so would pull live credentials into conversation context. The script reads these files itself at runtime.

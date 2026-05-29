@@ -1,0 +1,133 @@
+<link rel="icon" href="key-round" />
+<div data-sprinkle-autoopen data-sprinkle-title="OpTel Explorer"></div>
+
+<div class="sprinkle-stack">
+  <h2 class="sprinkle-heading">RUM Domain Keys</h2>
+  <p class="sprinkle-detail">Manage domain keys for Operational Telemetry queries</p>
+
+  <!-- Section 1: Configured Domains -->
+  <div class="sprinkle-card">
+    <div class="sprinkle-stack">
+      <div class="sprinkle-row" style="justify-content:space-between">
+        <h3 class="sprinkle-heading--s">Configured Domains</h3>
+        <button class="sprinkle-btn sprinkle-btn--secondary" onclick="loadDomains()">
+          <i data-lucide="refresh-cw" class="sprinkle-icon"></i> Refresh
+        </button>
+      </div>
+      <div id="domain-list"></div>
+    </div>
+  </div>
+
+  <div class="sprinkle-divider"></div>
+
+  <!-- Section 2: Manual Add Domain Key -->
+  <div class="sprinkle-card">
+    <div class="sprinkle-stack">
+      <h3 class="sprinkle-heading--s">Add Domain Key</h3>
+      <input type="text" id="add-domain" class="sprinkle-text-field" placeholder="example.com" />
+      <input type="password" id="add-key" class="sprinkle-text-field" placeholder="Domain key (secret)" />
+      <button class="sprinkle-btn sprinkle-btn--primary" onclick="addKey()">
+        <i data-lucide="plus" class="sprinkle-icon"></i> Add Key
+      </button>
+    </div>
+  </div>
+
+  <div class="sprinkle-divider"></div>
+
+  <!-- Section 3: Generate Key via Adobe -->
+  <div class="sprinkle-card">
+    <div class="sprinkle-stack">
+      <h3 class="sprinkle-heading--s">Generate Key via Adobe</h3>
+      <input type="text" id="gen-domain" class="sprinkle-text-field" placeholder="example.com" />
+      <button class="sprinkle-btn sprinkle-btn--primary" onclick="generateKey()">
+        <i data-lucide="external-link" class="sprinkle-icon"></i> Generate Key on Adobe
+      </button>
+      <p class="sprinkle-detail">Opens the Adobe RUM key generator. You'll need to log in manually, then automation will enter the domain and capture the generated key.</p>
+    </div>
+  </div>
+
+  <!-- Status message area -->
+  <div id="status-message" hidden></div>
+</div>
+
+<script>
+  function renderDomainList(domains) {
+    var container = document.getElementById('domain-list');
+    if (!domains || domains.length === 0) {
+      container.innerHTML = '<div class="sprinkle-empty-state">No domains configured yet</div>';
+    } else {
+      var html = '<div class="sprinkle-stack">';
+      domains.forEach(function(domain) {
+        html += '<span class="sprinkle-status-light sprinkle-status-light--positive">' + domain + '</span>';
+      });
+      html += '</div>';
+      container.innerHTML = html;
+    }
+    LucideIcons.render();
+  }
+
+  function loadDomains() {
+    slicc.lick({action: 'refresh', data: {}});
+  }
+
+  function addKey() {
+    var domain = document.getElementById('add-domain').value.trim();
+    var key = document.getElementById('add-key').value.trim();
+    if (!domain || !key) {
+      showStatus('Please enter both domain and key.', 'notice');
+      return;
+    }
+    slicc.lick({action: 'add-key', data: {domain: domain, key: key}});
+    document.getElementById('add-domain').value = '';
+    document.getElementById('add-key').value = '';
+    showStatus('Adding key...', 'informative');
+  }
+
+  function generateKey() {
+    var domain = document.getElementById('gen-domain').value.trim();
+    if (!domain) {
+      showStatus('Please enter a domain.', 'notice');
+      return;
+    }
+    slicc.lick({action: 'generate-key', data: {domain: domain}});
+    showStatus('Starting key generation for ' + domain + '...', 'informative');
+  }
+
+  function showStatus(message, variant) {
+    var el = document.getElementById('status-message');
+    var badgeClass = 'sprinkle-badge';
+    if (variant === 'positive') badgeClass += ' sprinkle-badge--positive';
+    else if (variant === 'negative') badgeClass += ' sprinkle-badge--negative';
+    else if (variant === 'notice') badgeClass += ' sprinkle-badge--notice';
+    else badgeClass += ' sprinkle-badge--informative';
+    el.innerHTML = '<span class="' + badgeClass + '">' + message + '</span>';
+    el.hidden = false;
+    setTimeout(function() { el.hidden = true; }, 5000);
+  }
+
+  slicc.on('update', function(data) {
+    if (data.action === 'domains-loaded') {
+      renderDomainList(data.domains || []);
+    }
+    if (data.action === 'key-added') {
+      loadDomains();
+      showStatus('Domain key added successfully.', 'positive');
+    }
+    if (data.action === 'generate-started') {
+      showStatus('Waiting for Adobe login...', 'informative');
+    }
+    if (data.action === 'generate-complete') {
+      loadDomains();
+      showStatus('Key generated and saved.', 'positive');
+    }
+    if (data.action === 'error') {
+      showStatus(data.message || 'An error occurred.', 'negative');
+    }
+  });
+
+  // Load domains on init
+  loadDomains();
+
+  // Fire init lick to bootstrap the scoop
+  slicc.lick({action: 'init', data: {}});
+</script>
