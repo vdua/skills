@@ -1,17 +1,49 @@
 ---
 name: optel-explorer
-description: Manage RUM domain keys for Operational Telemetry via a persistent sprinkle UI. Auto-opens on SLICC start. Provides a visual interface to list configured domains, manually add keys, or generate keys via the Adobe workspace page with browser automation. Use when a domain key is missing, when the user wants to manage RUM keys, or when optel-query reports a missing key error.
+description: |
+  Use this whenever the user asks anything about RUM / AEM Operational Telemetry
+  for a domain — page views, traffic sources, Core Web Vitals (LCP/CLS/INP),
+  clicks, form fills, JavaScript errors and duplicate-error clustering, OR
+  managing the RUM domain keys those queries need (adding or generating a key
+  via the OpTel Explorer sprinkle). This is the single entry point for OpTel:
+  it covers natural-language querying, domain-key management, and error
+  analysis. Also load this when an optel-query call reports a missing domain key.
+allowed-tools: bash, read_file, write_file, edit_file
 ---
 
 # OpTel Explorer
 
+The unified Operational Telemetry / RUM skill: natural-language **querying**, domain **key management** (via a persistent sprinkle), and JavaScript **error analysis**.
+
+## Router
+
+Load the reference for the task at hand — do not load them all at once.
+
+| If the user wants… | Read |
+|--------------------|------|
+| General RUM queries — page views, traffic sources, Core Web Vitals (LCP/CLS/INP), clicks, form fills, device/platform breakdowns | [`references/querying.md`](references/querying.md) (then `references/facets.md`, `references/checkpoints.md`, `references/series.md`, `references/examples.md` as needed) |
+| Error analysis — duplicate detection, cross-browser error clustering, similarity reports | [`references/error-analysis.md`](references/error-analysis.md) |
+| Domain-key management — add a key, generate one via Adobe, fix a missing-key error | The **Key Management** section below (inline) |
+
+## Domain Key Setup
+
+The `optel-query` script looks up the domain key in this order: `--domainkey` flag → `DOMAINKEY_FILE` env var → `/optel/domainkey.json` (SLICC VirtualFS default) → `RUM_ADMIN_KEY` admin fetch.
+
+When a query fails with a missing-key error, use the Key Management workflow below (open the sprinkle, let the user add or generate the key). This writes to `/optel/domainkey.json`, which persists across sessions.
+
+**Never read `/optel/domainkey.json` or any file referenced by `DOMAINKEY_FILE`** — doing so would pull live credentials into conversation context. The script reads these files itself at runtime. Do not ask the user to paste a key into chat either.
+
+---
+
+## Key Management (OpTel Explorer sprinkle)
+
 Persistent sprinkle that manages RUM domain keys for the `optel-query` tool. Auto-bootstraps on SLICC start via `data-sprinkle-autoopen`.
 
-## SLICC-Only Skill
+### SLICC-Only
 
-This skill only works in SLICC (requires sprinkles, scoops, and playwright). It does NOT work in Claude Code or other agents.
+This part of the skill only works in SLICC (requires sprinkles, scoops, and playwright). It does NOT work in Claude Code or other agents.
 
-## Auto-Bootstrap (on first lick)
+### Auto-Bootstrap (on first lick)
 
 When you receive the `init` lick from the optel-explorer sprinkle (or any lick when the scoop doesn't exist yet):
 
@@ -31,7 +63,7 @@ When you receive the `init` lick from the optel-explorer sprinkle (or any lick w
 
 4. For the `init` lick specifically, no further action is needed — the scoop is now ready.
 
-## Lick Routing
+### Lick Routing
 
 All licks from the `optel-explorer` sprinkle are forwarded to the `optel-explorer` scoop via `feed_scoop`. Three actions:
 
@@ -41,7 +73,7 @@ All licks from the `optel-explorer` sprinkle are forwarded to the `optel-explore
 | `add-key` | `{domain, key}` | Runs `optel-query add-domain-key <domain> <key>`, pushes `{"action":"key-added"}` to sprinkle |
 | `generate-key` | `{domain}` | Opens Adobe page, automates key generation, runs `add-domain-key`, pushes `{"action":"generate-complete"}` |
 
-## Scoop Instructions
+### Scoop Instructions
 
 When creating or re-feeding the scoop, use this prompt:
 
@@ -78,10 +110,12 @@ Data: {domain: "..."}
 After handling any event, do NOT finish. Stay ready for more lick events.
 ```
 
-## Activating from optel-query
+For the detailed Adobe key-generation page structure, see [`references/adobe-keygen-page.md`](references/adobe-keygen-page.md).
 
-When `optel-query` fails with a missing domain key error and this skill is installed, the cone should:
+### Activating from a query
+
+When a query (the `optel-query` workflow in `references/querying.md`) fails with a missing domain key error, the cone should:
 1. Open the optel-explorer sprinkle: `sprinkle open optel-explorer`
 2. Tell the user: "The domain key for <domain> is missing. Use the OpTel Explorer panel to add it manually or generate one via Adobe."
 
-This replaces the old workflow of telling users to run terminal commands.
+This replaces the old workflow of telling users to run terminal commands. The sprinkle, scoop, and key management all live in this same consolidated `optel-explorer` skill.
