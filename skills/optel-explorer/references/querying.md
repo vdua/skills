@@ -5,7 +5,7 @@ Translates natural language into structured RUM queries and executes them via th
 ## Required References
 
 Load on demand — do not load all at once:
-- [`facets.md`](facets.md) — all 13 facets, combiners, negation support, examples
+- [`facets.md`](facets.md) — all facets, combiners, negation support, examples
 - [`checkpoints.md`](checkpoints.md) — all checkpoint types and source/target properties
 - [`series.md`](series.md) — available metrics series (lcp, cls, inp, ttfb, formBlockLoadTime, timeOnPage)
 - [`examples.md`](examples.md) — worked examples for common patterns
@@ -87,8 +87,8 @@ Build the **smallest** query that answers the question. Expand only when the use
 ## Facets vs Series
 
 - **Facets** = filter/group — define *which* bundles are included
-- **Series** = metrics — define *what* data to return (count, LCP p75, CLS p75, etc.)
-- Default: only `pageViews` (count). Add `--series` only when the user asks for performance numbers.
+- **Series** = metrics — define *what* data to return (count, LCP p75, CLS p75, form load time, time on page, etc.)
+- Default: only `pageViews` (count). Add `--series` only when the user asks for metrics beyond page-view counts.
 
 ---
 
@@ -133,8 +133,12 @@ Build the **smallest** query that answers the question. Expand only when the use
 **Verify every facet's combiner in `facets.md` before using it.**
 
 Combiner types:
-- **`some` (OR within values)**: `userAgent`, `error`, `click.source`, `click.target`, `fill.source`, `loadresource.source`, `viewmedia.target`, `enter.source`
+- **`some` (OR within values)**: `userAgent`, `error`, `click.source`, `click.target`, `fill.source`, `loadresource.source`, `loadresource.target`, `viewmedia.target`, `enter.source`, `missingresource.source`, `missingresource.target`, `acquisitionSource`
 - **`every` (AND within values)**: `url`, `checkpoint`, `navigate.source`, `viewblock.source`
+
+**Important caveats:**
+- iOS traffic does not report Core Web Vitals (browser limitation). Filtering by iOS + requesting CWV series yields no data.
+- `enter.source` values are referrer URLs (e.g. `https://www.google.com/`), `(direct)` for address bar/bookmarks/iOS apps, or `android-app://` URIs. For classified sources like `paid:search:google`, use `acquisitionSource` instead.
 
 Different facets always combine with **AND** across each other.
 
@@ -142,10 +146,10 @@ Different facets always combine with **AND** across each other.
 
 Common patterns:
 ```json
-{"userAgent": ["mobile"], "url": ["/checkout"]}
+{"userAgent": ["mobile"], "url": ["https://www.example.com/checkout"]}
 {"checkpoint": ["fill"], "!checkpoint": ["formsubmit"]}
-{"checkpoint": ["enter"], "enter.source": ["search:google"]}
-{"checkpoint": ["error"], "url": ["/payment"]}
+{"checkpoint": ["enter"], "enter.source": ["https://www.google.com/"]}
+{"checkpoint": ["error"], "url": ["https://www.example.com/payment"]}
 {"checkpoint": ["cwv-lcp"]}
 ```
 
@@ -153,17 +157,20 @@ Common patterns:
 
 ## Step 3b: Select Series
 
-Consult `series.md`. Add `--series` only when the user asks for metrics:
+Consult `series.md`. Add `--series` only when the user asks for metrics beyond page-view counts:
 - Core Web Vitals → `--series lcp,cls,inp`
 - Form load time → `--series formBlockLoadTime`
 - Time on page → `--series timeOnPage`
+- TTFB → `--series ttfb`
+
+Note: series names are `lcp`, `cls`, `inp` (not `cwv-lcp` etc. — those are checkpoint names, not series names).
 
 ---
 
 ## Step 4: Validate Before Generating CLI
 
 - [ ] Dates in `YYYY-MM-DD`, startDate ≤ endDate
-- [ ] All facet names exist in `facets.md` (only 13 valid facets)
+- [ ] All facet names exist in `facets.md`
 - [ ] Combiners verified per facet
 - [ ] Negation only on supported facets
 - [ ] JSON syntax valid
@@ -174,11 +181,11 @@ Consult `series.md`. Add `--series` only when the user asks for metrics:
 
 ```bash
 --query '{"userAgent":["mobile"]}'
---query '{"url":["/checkout"]}'
+--query '{"url":["https://www.example.com/checkout"]}'
 --query '{"checkpoint":["click"],"click.source":[".buy-button"]}'
 --query '{"checkpoint":["error"]}'
 --query '{"checkpoint":["fill"],"!checkpoint":["formsubmit"]}'
---query '{"checkpoint":["enter"],"enter.source":["search:google"]}'
+--query '{"checkpoint":["enter"],"enter.source":["https://www.google.com/"]}'
 --query '{"checkpoint":["cwv-lcp"]}' --series lcp,cls,inp
 ```
 

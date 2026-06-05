@@ -27,7 +27,7 @@ dataChunks.filter = {
 ### 1. `url`
 **Combiner**: `every` | **Negative Support**: ✅ Yes (`!url`)
 
-**What it does**: Extracts the URL path from a bundle, sanitized to remove PII (IDs, hashes, encoded data). The URL **must** contain the domain name and scheme as well.
+**What it does**: Extracts the URL path from a bundle, sanitized to remove PII (IDs, hashes, encoded data). The URL **must** contain the domain name and scheme as well. URLs with long numbers or IDs may be grouped by pattern (e.g. `/products/12345` and `/products/67890` may appear as a single grouped pattern).
 
 **Filter Example**:
 ```javascript
@@ -51,6 +51,10 @@ dataChunks.filter = {
 **Combiner**: `some` | **Negative Support**: ✅ Yes (`!userAgent`)
 
 **What it does**: Extracts device type (desktop/mobile/tablet) and OS (windows/ios/android/mac/linux).
+
+**Caveats**:
+- **iOS does not report Core Web Vitals** — this is a browser limitation on iOS. Filtering by `ios` and requesting CWV series will yield no data.
+- **`bot`** includes crawlers that access your site and execute JavaScript (search engines, monitoring bots). These are visible in RUM data.
 
 **Filter Example**:
 ```javascript
@@ -99,14 +103,14 @@ dataChunks.filter = {
 ### 4. `navigate.source`
 **Combiner**: `every` | **Negative Support**: ❌ No
 
-**What it does**: Extracts the element/link that triggered navigation (CSS selector or identifier).
+**What it does**: Extracts the internal referrer URL — the page the user navigated from within the same site. Values are full URLs (e.g. `https://example.com/cards/credit-cards.html`). For external referrers, use `enter.source` instead.
 
 **Filter Example**:
 ```javascript
 dataChunks.filter = {
-  'navigate.source': ['.nav-menu a', '.cta-button']
+  'navigate.source': ['https://www.example.com/cards/credit-cards.html']
 };
-// Matches bundles where navigation came from nav menu AND CTA button
+// Matches bundles where user navigated from the credit cards page
 ```
 
 ---
@@ -114,7 +118,12 @@ dataChunks.filter = {
 ### 5. `enter.source`
 **Combiner**: `some` | **Negative Support**: ❌ No
 
-**What it does**: Extracts raw referrer URLs (where users came from). Values are full URLs, e.g. `https://www.google.com/`. Use `acquisitionSource` (see below) for classified paid/owned traffic filtering.
+**What it does**: Extracts the referrer for external traffic (where users came from). Values are:
+- Referrer domain URLs (e.g. `https://www.google.com/`, `https://www.hdfc.bank.in/`)
+- `(direct)` — address bar, bookmarks, or iOS app links
+- `android-app://` URIs (e.g. `android-app://com.google.android.gm/`) when traffic comes from Android apps
+
+Use `acquisitionSource` (see below) for classified paid/owned/earned traffic filtering (e.g. `paid:search:google`).
 
 **Filter Example**:
 ```javascript
@@ -129,16 +138,14 @@ dataChunks.filter = {
 ### 6. `loadresource.source`
 **Combiner**: `some` | **Negative Support**: ❌ No
 
-**What it does**: Identifies resources being loaded (CSS, JS, images).
-
-**Note**: This facet is defined twice in datachunks.js with different combiners. The second definition (line 44) with `some` combiner is the active one.
+**What it does**: Identifies resources being loaded (JSON APIs, JS, CSS, HTML fragments). Values are full URLs.
 
 **Filter Example**:
 ```javascript
 dataChunks.filter = {
-  'loadresource.source': ['/styles/main.css', '/scripts/app.js']
+  'loadresource.source': ['https://www.example.com/libs/granite/csrf/token.json', 'https://www.example.com/eds-v1-forms/common/apiDataSecurity.js']
 };
-// Matches bundles loading main.css OR app.js
+// Matches bundles loading either of these resources
 ```
 
 ---
@@ -275,7 +282,7 @@ dataChunks.filter = {
 
 ---
 
-### 13. `missingresource.source`
+### 14. `missingresource.source`
 **Combiner**: `some` | **Negative Support**: ❌ No
 
 **What it does**: Extracts the URL of each resource that failed to load (any HTTP error — 404, 405, 500, etc.).
@@ -299,7 +306,7 @@ dataChunks.filter = {
 
 ---
 
-### 14. `missingresource.target`
+### 15. `missingresource.target`
 **Combiner**: `some` | **Negative Support**: ❌ No
 
 **What it does**: Extracts the HTTP status code returned when a resource failed to load (e.g. `"404"`, `"405"`, `"500"`).
@@ -323,7 +330,7 @@ dataChunks.filter = {
 
 ---
 
-### 15. `acquisitionSource`
+### 16. `acquisitionSource`
 **Combiner**: `some` | **Negative Support**: ❌ No
 
 **What it does**: Classifies how visitors were acquired — paid, owned, or earned — by reclassifying `paid`, `email`, and `utm` checkpoints into a unified hierarchical source string. Format: `{paidOwned}:{category}:{vendor}`. Each level is returned as a separate value so you can filter at any granularity.
@@ -436,9 +443,9 @@ dataChunks.filter = {
 ### Pattern 4: Traffic source analysis
 ```javascript
 dataChunks.filter = {
-  'enter.source': ['search:google', 'social:facebook']
+  'enter.source': ['https://www.google.com/', 'https://www.facebook.com/']
 };
-// Matches: visits from Google search AND Facebook
+// Matches: visits referred from Google OR Facebook (some combiner = OR)
 ```
 
 ### Pattern 5: Error monitoring on checkout
@@ -466,7 +473,7 @@ dataChunks.filter = {
   'viewmedia.target': ['/images/product-hero.jpg'],
   'click.target': ['/products/details']
 };
-// Matches: viewed product image OR clicked to details page
+// Matches: viewed product image AND clicked to details page (cross-facet = AND)
 ```
 
 ### Pattern 8: Exclude bot traffic and test pages
@@ -490,8 +497,8 @@ dataChunks.filter = {
 - `checkpoint` - Event types (every, negative ✅)
 
 ### Navigation & Traffic
-- `navigate.source` - Navigation triggers (every)
-- `enter.source` - Referrers/traffic sources (every)
+- `navigate.source` - Internal referrer URL (page navigated from) (every)
+- `enter.source` - External referrers/traffic sources (some)
 
 ### Resources
 - `loadresource.source` - Loaded resources (some)
@@ -522,62 +529,11 @@ dataChunks.filter = {
 
 ---
 
-## Checkpoint Reference
-
-Checkpoint types observed in RUM data and their source/target semantics. Only the facets listed in **Facet Format** are defined in the query pipeline; for others use `checkpoint: ['name']` only. Run `node cli.js <domain> <start> <end> --facet-values checkpoint` to see which checkpoints exist for your site.
-
-| Checkpoint | Source | Target | Facet Format |
-|------------|--------|--------|--------------|
-| `top` | — | — | checkpoint only |
-| `enter` | Referrer URL (where the user came from) | Document visibilityState (optional) | `enter.source` |
-| `navigate` | Referrer URL | Document visibilityState (optional) | `navigate.source` (element that triggered nav) |
-| `redirect` | Optional `redirect_from` URL param | Redirect count and duration (e.g. `2:150`, `1~50`) | checkpoint only |
-| `back_forward` | Referrer URL | Document visibilityState | checkpoint only |
-| `reload` | Referrer URL | Document visibilityState | checkpoint only |
-| `click` | CSS selector / idealized selector of clicked element | href or destination URL if link | `click.source` / `click.target` |
-| `viewblock` | Block class name or identifier (e.g. hero, features) | — | `viewblock.source` |
-| `viewmedia` | — | Media URL (image/video/audio), cleaned of query params | `viewmedia.target` |
-| `loadresource` | Resource URL (fragment, .json, .js, API) | Duration in ms (optional) | `loadresource.source` / `loadresource.target` |
-| `missingresource` | Resource URL that failed to load | HTTP response status (e.g. 404) | `missingresource.source` / `missingresource.target` |
-| `fill` | CSS selector of form field that was filled | — | `fill.source` |
-| `formsubmit` | Form selector / identifier | Form action URL | checkpoint only |
-| `search` | Search field selector or form identifier | — | checkpoint only |
-| `login` | Form selector (form with one password field) | — | checkpoint only |
-| `signup` | Form selector (form with multiple password fields) | — | checkpoint only |
-| `error` | Error location or script path (e.g. /scripts/main.js, inline) | Error message or type (e.g. TypeError) | `error` (values as `"source \| target"`) |
-| `404` | — | Missing or not-found URL | checkpoint only |
-| `language` | Document language (e.g. from `html lang`) | Navigator language preference | checkpoint only |
-| `utm` | UTM parameter name (e.g. utm_source, utm_medium) | UTM parameter value | checkpoint only |
-| `acquisition` | Traffic source / campaign details | — | checkpoint only |
-| `paid` | Ad network name (google, facebook, microsoft, linkedin, etc.) | Click/campaign param name (e.g. gclid, fbclid) | checkpoint only |
-| `email` | Email platform (mailchimp, marketo) | Campaign param name (e.g. mc_cid, mkt_tok) | checkpoint only |
-| `consent` | Consent provider (onetrust, trustarc, usercentrics) | Banner state: show, hidden, suppressed | checkpoint only |
-| `a11y` | Accessibility audience level (off, low, medium, high) | Scale string (e.g. off:low:medium:high) | checkpoint only |
-| `cwv` | Metric name (LCP, CLS, INP, TTFB) | Metric value | checkpoint only |
-| `cwv-ttfb` | — | Time to First Byte value (ms) | checkpoint only |
-| `cwv-lcp` | LCP element selector or description | — | checkpoint only |
-| `cwv-cls` | — | Cumulative Layout Shift value | checkpoint only |
-| `cwv-inp` | — | Interaction to Next Paint value (ms) | checkpoint only |
-| `prerender` | Referrer URL | Document visibilityState or prerendered | checkpoint only |
-
----
-
 ## Related Documentation
 
 - **AEM Operational Telemetry**: https://www.aem.live/docs/operational-telemetry
 - **AEM Developer – Operational Telemetry**: https://www.aem.live/developer/operational-telemetry
 - **RUM Distiller README**: https://github.com/adobe/rum-distiller/blob/main/README.md
 - **RUM Distiller API**: https://github.com/adobe/rum-distiller/blob/main/API.md
-
----
-
-## Summary
-
-This skill defines **15 facets** for filtering RUM data:
-- **4 basic facets**: url, userAgent, checkpoint, error
-- **11 checkpoint-specific facets**: navigate.source, loadresource.source, loadresource.target, click.source, click.target, viewblock.source, fill.source, viewmedia.target, missingresource.source, missingresource.target
-
-**Facets with negative support** (can use `!facetName`): url, userAgent, checkpoint, error
-
-**To filter data**: Set `dataChunks.filter` to an object with facet names as keys and arrays of values to match.
+- **Checkpoint details**: See `checkpoints.md` for full checkpoint source/target semantics
 

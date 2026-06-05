@@ -48,20 +48,22 @@ const totals = dataChunks.totals;
 
 ## Series in RUM Distiller (API)
 
-These are the **built-in series** provided by `@adobe/rum-distiller`. Not all are registered in this project’s `optel-query.jsh`; see “Series registered in this project” below.
+These are the **built-in series** provided by `@adobe/rum-distiller`. Not all are registered in this project's `optel-query.jsh`; see "Series registered in this project" below.
 
-| Series         | Returns | Description |
-|----------------|--------|-------------|
-| **pageViews**  | `number` | Count of page views (impressions). Pre-rendering is counted as a page view. |
-| **visits**     | `number` | Count of visits (page view that does not follow an internal link; session start). |
-| **bounces**    | `number` | Count of bounces (visit with no click events). |
-| **lcp**        | `number` | Largest Contentful Paint (time for largest contentful element to load). |
-| **cls**        | `number` | Cumulative Layout Shift (sum of layout shifts in the page view). |
-| **inp**        | `number` | Interaction to Next Paint (time to next paint after an interaction). |
-| **ttfb**       | `number` | Time to First Byte. |
-| **engagement** | `number` | Count of “engaged” page views (at least some interaction or 4+ viewmedia/viewblock events). |
-| **earned**     | `number` | Count of earned visits (not paid or owned). |
-| **organic**    | `number` | Count of organic visits (not paid). |
+| Series | Returns | Description | In optel-query? |
+|--------|---------|-------------|:---:|
+| **pageViews** | `number` | Count of page views (impressions). Pre-rendering is counted as a page view. | ✅ |
+| **visits** | `number` | Count of visits (page view that does not follow an internal link; session start). | ❌ |
+| **bounces** | `number` | Count of bounces (visit with no click events). | ❌ |
+| **lcp** | `number` | Largest Contentful Paint (time for largest contentful element to load). | ✅ |
+| **cls** | `number` | Cumulative Layout Shift (sum of layout shifts in the page view). | ✅ |
+| **inp** | `number` | Interaction to Next Paint (time to next paint after an interaction). | ✅ |
+| **ttfb** | `number` | Time to First Byte. | ✅ |
+| **engagement** | `number` | Count of "engaged" page views (at least some interaction or 4+ viewmedia/viewblock events). | ❌ |
+| **earned** | `number` | Count of earned visits (not paid or owned). | ❌ |
+| **organic** | `number` | Count of organic visits (not paid). | ❌ |
+
+**Note**: `visits`, `bounces`, `engagement`, `earned`, and `organic` exist in the rum-distiller library but are **not registered** in `optel-query.jsh`. They cannot be queried via `--series`. To add support, the script would need additional `dataChunks.addSeries(...)` calls.
 
 ---
 
@@ -73,7 +75,7 @@ The following series are **actually added** inside `skills/optel-explorer/script
 
 **Source**: `@adobe/rum-distiller` → `series.pageViews`
 
-**What it does**: Counts page views (one per bundle). This is the primary series used for “how many page views match this filter.”
+**What it does**: Counts page views (one per bundle). This is the primary series used for "how many page views match this filter."
 
 **Totals**: `dataChunks.totals.pageViews` has `count`, `sum`, `mean`, etc. The **query CLI** currently returns only `totals.pageViews.sum` as the query result.
 

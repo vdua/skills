@@ -202,9 +202,9 @@ dataChunks.filter = {
 **What it tracks**: How visitors arrive at the page (external referrers).
 
 **Source values**:
-- External domain URLs (e.g., `https://google.com`)
-- `direct` - URL typed directly, bookmarks, or iOS app links
-- Classified values like `search:google`, `social:facebook`
+- Referrer domain URLs (e.g., `https://www.google.com/`)
+- `(direct)` — address bar, bookmarks, or iOS app links
+- `android-app://` URIs (e.g., `android-app://com.google.android.gm/`)
 
 **Use cases**:
 - Traffic source analysis
@@ -216,33 +216,33 @@ dataChunks.filter = {
 ```javascript
 dataChunks.filter = {
   checkpoint: ['enter'],
-  'enter.source': ['search:google', 'social:facebook']
+  'enter.source': ['https://www.google.com/', 'https://www.facebook.com/']
 };
-// Visits from Google search or Facebook
+// Visits referred from Google or Facebook
 ```
 
 ---
 
 ### `navigate`
-**Category**: Navigation | **Source**: Navigation element/link | **Target**: N/A
+**Category**: Navigation | **Source**: Internal referrer URL (the page navigated from) | **Target**: N/A
 
-**What it tracks**: Internal navigation paths between pages.
+**What it tracks**: Internal navigation paths between pages. The source is the referring page URL within the same site.
 
-**When it fires**: When users click links to navigate within the site
+**When it fires**: When users navigate between pages within the site (internal link clicks).
 
 **Use cases**:
 - Discover internal navigation patterns
 - Identify popular navigation paths
 - Optimize site structure
-- Track navigation from specific elements
+- Track which pages drive traffic to other pages
 
 **Filter example**:
 ```javascript
 dataChunks.filter = {
   checkpoint: ['navigate'],
-  'navigate.source': ['.nav-menu', '.footer-links']
+  'navigate.source': ['https://www.example.com/cards/credit-cards.html']
 };
-// Navigation from menu or footer
+// Pages navigated from the credit cards page
 ```
 
 ---
@@ -688,43 +688,7 @@ dataChunks.filter = {
 
 ---
 
-## Using Checkpoints in Filters
-
-### Filter by specific checkpoints
-```javascript
-dataChunks.filter = {
-  checkpoint: ['click', 'fill', 'formsubmit']
-};
-// Only bundles with ALL three events (combiner: 'every')
-```
-
-### Exclude checkpoints (negative filter)
-```javascript
-dataChunks.filter = {
-  '!checkpoint': ['error', '404']
-};
-// Exclude bundles with errors or 404s
-```
-
-### Combine checkpoint with source/target
-```javascript
-dataChunks.filter = {
-  checkpoint: ['click'],
-  'click.source': ['.buy-button'],
-  'click.target': ['/checkout']
-};
-// Buy button clicks going to checkout
-```
-
-### Multi-checkpoint engagement analysis
-```javascript
-dataChunks.filter = {
-  checkpoint: ['viewblock', 'click', 'viewmedia'],
-  'viewblock.source': ['hero', 'features'],
-  url: ['/products']
-};
-// Product pages with high engagement
-```
+For filter syntax, combiners (`some`/`every`), negation (`!checkpoint`), and multi-facet patterns, see [`facets.md`](facets.md).
 
 ---
 
@@ -742,7 +706,7 @@ dataChunks.filter = {
 
 ## Related Documentation
 
-- **Facets Documentation**: See `facets.md` for filtering by checkpoint source and target
+- **Facets Documentation**: [`facets.md`](facets.md) — all filter facets, combiners, and value formats
 - **AEM Operational Telemetry**: https://www.aem.live/docs/operational-telemetry
 - **AEM Developer – Operational Telemetry**: https://www.aem.live/developer/operational-telemetry
 - **Helix RUM Enhancer** (checkpoint instrumentation): https://github.com/adobe/helix-rum-enhancer
@@ -752,13 +716,13 @@ dataChunks.filter = {
 
 ## Quick Reference Table
 
-Aligned with the [Checkpoint Reference in facets.md](facets.md#checkpoint-reference). **Has Source** / **Has Target** indicate whether the checkpoint event carries source/target data in RUM payloads.
+**Has Source** / **Has Target** indicate whether the checkpoint event carries source/target data in RUM payloads.
 
 | Checkpoint | Has Source | Has Target | Primary Use Case |
 |------------|:----------:|:----------:|-------------------|
 | `top` | ❌ | ❌ | Page load start |
 | `enter` | ✅ | ✅ | Traffic sources (referrer; optional visibilityState) |
-| `navigate` | ✅ | ✅ | Internal navigation (element; optional visibilityState) |
+| `navigate` | ✅ | ✅ | Internal navigation (referrer URL; optional visibilityState) |
 | `redirect` | ✅ | ✅ | Redirect hops (optional redirect_from; count/duration) |
 | `back_forward` | ✅ | ✅ | Back/forward navigation (referrer; visibilityState) |
 | `reload` | ✅ | ✅ | Page reload (referrer; visibilityState) |

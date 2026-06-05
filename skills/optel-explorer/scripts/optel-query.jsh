@@ -444,7 +444,23 @@ var require_query = __commonJS({
       const resolvedKey = await fetchDomainKey(domain, domainKey);
       __dbg(`domain key resolved (present=${!!resolvedKey}); constructing Loader`);
       const loader = new Loader(domain, resolvedKey);
-      __dbg("calling fetchPeriod...");
+      // Probe: validate domain key with a single cheap request before firing the full batch.
+      // Use the most recent day as the probe target — it is always a valid data path.
+      __dbg("probing domain key with single request...");
+      const probeDate = new Date(endDate || new Date());
+      const probeY = probeDate.getUTCFullYear();
+      const probeM = String(probeDate.getUTCMonth() + 1).padStart(2, "0");
+      const probeD = String(probeDate.getUTCDate()).padStart(2, "0");
+      const probeURL = loader.apiURL(`${probeY}/${probeM}/${probeD}`);
+      const probeResp = await fetch(probeURL);
+      __dbg(`probe status=${probeResp.status}`);
+      if (probeResp.status === 403 || probeResp.status === 401) {
+        throw new Error(
+          `Invalid or expired domain key for "${domain}" (HTTP ${probeResp.status}). ` +
+          `Run: optel-explorer generate ${domain}  — or pass --domainkey <key> directly.`
+        );
+      }
+      __dbg("probe OK; calling fetchPeriod...");
       const bundles = await loader.fetchPeriod(startDate, endDate, [], interval);
       __dbg(`fetchPeriod returned ${bundles.length} bundles; building DataChunks...`);
       const dc = await getDataChunks(bundles);

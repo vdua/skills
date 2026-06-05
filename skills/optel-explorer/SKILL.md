@@ -80,37 +80,43 @@ When creating or re-feeding the scoop, use this prompt:
 ```
 You own the sprinkle "optel-explorer" at /workspace/skills/optel-explorer/optel-explorer.shtml.
 
-You handle lick events forwarded from the cone. Two actions:
+You handle lick events forwarded from the cone. Four actions:
+
+## "init" lick
+Data: {}
+No-op. You are already running. Do nothing.
+
+## "refresh" lick
+Data: {}
+1. Read /optel/domainkey.json to get the list of configured domain names.
+2. sprinkle send optel-explorer '{"action":"domains-loaded","domains":["domain1","domain2"]}'
+   (use the actual list of domain names; send empty array [] if the file is missing or empty)
 
 ## "add-key" lick
 Data: {domain: "...", key: "..."}
 1. Run: optel-query add-domain-key <domain> <key>
-2. On success: sprinkle send optel-explorer '{"action":"key-added"}'
+2. On success:
+   a. sprinkle send optel-explorer '{"action":"key-added"}'
+   b. Read /optel/domainkey.json, send updated domain list:
+      sprinkle send optel-explorer '{"action":"domains-loaded","domains":[...]}'
 3. On error: sprinkle send optel-explorer '{"action":"error","message":"<details>"}'
 
 ## "generate-key" lick
 Data: {domain: "..."}
-1. Push: sprinkle send optel-explorer '{"action":"generate-started"}'
-2. Check if the Adobe tab is open: playwright-cli tab-list
-   - Look for URL containing "aemcs-workspace.adobe.com"
-   - If not found: playwright-cli navigate https://aemcs-workspace.adobe.com/customer/generate-optel-domain-key
-3. Check if user is logged in (look for "Generate" button or user avatar in snapshot). If not logged in, poll every 10 seconds for up to 2 minutes.
-4. Fill the domain (Angular Material input, id="mat-input-0"):
-   playwright-cli eval --tab=<ID> "const el = document.getElementById('mat-input-0'); const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; s.call(el, '<domain>'); el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); 'done'"
-5. Click Generate:
-   playwright-cli eval --tab=<ID> "Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Generate')).click(); 'clicked'"
-6. Wait 4 seconds, then inspect page:
-   - If "No data found for this domain" → sprinkle send optel-explorer '{"action":"error","message":"No data found for <domain> — domain has no RUM data."}'
-   - If key is shown (look for "Generated key" text + masked key + "Show key" button):
-     a. Click "Show key" button to reveal the key
-     b. Read the key value from the DOM
-     c. Run: optel-query add-domain-key <domain> <key>
-     d. sprinkle send optel-explorer '{"action":"generate-complete"}'
+1. sprinkle send optel-explorer '{"action":"generate-started"}'
+2. Run: optel-explorer generate <domain>
+   - Calls POST /apiv3/customer/rum/generate directly via the aemcs-workspace tab's auth cookie.
+   - Requires https://aemcs-workspace.adobe.com to be open and logged in.
+   - On success: key is automatically saved to /optel/domainkey.json.
+3. If exit 0:
+   a. sprinkle send optel-explorer '{"action":"generate-complete"}'
+   b. Read /optel/domainkey.json, send updated domain list:
+      sprinkle send optel-explorer '{"action":"domains-loaded","domains":[...]}'
+4. If exit non-zero (no RUM data, session expired, tab missing):
+   sprinkle send optel-explorer '{"action":"error","message":"<details from stderr>"}'
 
 After handling any event, do NOT finish. Stay ready for more lick events.
 ```
-
-For the detailed Adobe key-generation page structure, see [`references/adobe-keygen-page.md`](references/adobe-keygen-page.md).
 
 ### Activating from a query
 
