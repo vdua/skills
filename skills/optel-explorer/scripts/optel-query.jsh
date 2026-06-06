@@ -344,7 +344,7 @@ var require_datachunks = __commonJS({
       const { DataChunks, series, facets, facetFns } = await loadRumDistiller();
       const { url, userAgent, checkpoint, acquisitionSource } = facets;
       const { checkpointSource, checkpointTarget } = facetFns;
-      const { pageViews, lcp, cls, inp, ttfb } = series;
+      const { pageViews, lcp, cls, inp, ttfb, visits, bounces, engagement, earned, organic } = series;
       const dataChunks = new DataChunks();
       dataChunks.load([{ rumBundles }]);
       dataChunks.addSeries("pageViews", pageViews);
@@ -362,6 +362,11 @@ var require_datachunks = __commonJS({
       dataChunks.addSeries("cls", cls);
       dataChunks.addSeries("inp", inp);
       dataChunks.addSeries("ttfb", ttfb);
+      dataChunks.addSeries("visits", visits);
+      dataChunks.addSeries("bounces", bounces);
+      dataChunks.addSeries("engagement", engagement);
+      dataChunks.addSeries("earned", earned);
+      dataChunks.addSeries("organic", organic);
       dataChunks.addFacet("click.source", checkpointSource("click"), "some", "never");
       dataChunks.addFacet("click.target", checkpointTarget("click"), "some", "never");
       dataChunks.addFacet("viewblock.source", checkpointSource("viewblock"), "every", "never");
@@ -375,6 +380,21 @@ var require_datachunks = __commonJS({
       dataChunks.addFacet("missingresource.target", (bundle) => (mrTargetRaw(bundle) || []).map(String), "some", "never");
       dataChunks.addFacet("period", (bundle) => [new Date(bundle.timeSlot).toISOString().slice(0, 10)], "some", "none");
       dataChunks.addFacet("acquisitionSource", acquisitionSource, "some", "none");
+      // Source/target facets for cwv-lcp, utm, language, consent checkpoints.
+      dataChunks.addFacet("cwv-lcp.source", checkpointSource("cwv-lcp"), "some", "never");
+      dataChunks.addFacet("utm.source", checkpointSource("utm"), "some", "never");
+      dataChunks.addFacet("utm.target", checkpointTarget("utm"), "some", "never");
+      dataChunks.addFacet("language.source", checkpointSource("language"), "some", "never");
+      dataChunks.addFacet("language.target", checkpointTarget("language"), "some", "never");
+      dataChunks.addFacet("consent.source", checkpointSource("consent"), "some", "never"); // provider
+      dataChunks.addFacet("consent.target", checkpointTarget("consent"), "some", "never"); // show/hidden/suppressed
+      // Foreground/background visibility is carried in the standard `target` field
+      // on navigation checkpoints (values: visible/hidden). Exposed via the regular
+      // *.target facet pattern rather than a bespoke "visibility" facet.
+      dataChunks.addFacet("enter.target", checkpointTarget("enter"), "some", "never");
+      dataChunks.addFacet("navigate.target", checkpointTarget("navigate"), "some", "never");
+      dataChunks.addFacet("back_forward.target", checkpointTarget("back_forward"), "some", "never");
+      dataChunks.addFacet("reload.target", checkpointTarget("reload"), "some", "never");
       return dataChunks;
     }
     module2.exports = { getDataChunks };
@@ -431,7 +451,29 @@ var require_query = __commonJS({
         p50: formatTime(series?.percentile(50)),
         p75: formatTime(series?.percentile(75)),
         p95: formatTime(series?.percentile(95))
-      })
+      }),
+      ttfb: (series) => {
+        let result = "N/A";
+        const raw = series?.percentile?.(75);
+        const count = Number(series?.count || 0);
+        if (count >= CWV_MIN_COUNT && Number.isFinite(raw)) result = formatTime(raw / 1e3);
+        return { p75: result };
+      },
+      timeOnPage: (series) => ({
+        mean: formatTime(series?.mean),
+        p50: formatTime(series?.percentile?.(50)),
+        p75: formatTime(series?.percentile?.(75))
+      }),
+      // Count-style series (visits/bounces/engagement/earned/organic): the
+      // underlying rum-distiller series returns the bundle weight when the
+      // bundle qualifies (else 0), so the weighted count is the aggregate
+      // `.sum`. Both the query path (totals[name]) and the facet path
+      // (facet.metrics[name]) expose `.sum`, so this works for both.
+      visits: (series) => ({ sum: Math.round(series?.sum || 0) }),
+      bounces: (series) => ({ sum: Math.round(series?.sum || 0) }),
+      engagement: (series) => ({ sum: Math.round(series?.sum || 0) }),
+      earned: (series) => ({ sum: Math.round(series?.sum || 0) }),
+      organic: (series) => ({ sum: Math.round(series?.sum || 0) })
     };
     function getSamplingRatios(dataChunks) {
       return dataChunks.totals.pageViews.values.reduce((acc, v) => {
@@ -491,6 +533,11 @@ var require_query = __commonJS({
       dataChunks.filter = queryFilter;
       const filteredPageViews = dataChunks.totals.pageViews.sum;
       const filteredSamplingRatios = getSamplingRatios(dataChunks);
+      if (!dataChunks.facets[facetName]) {
+        throw new Error(
+          `Unknown facet "${facetName}". Registered facets: ${Object.keys(dataChunks.facets).join(", ")}`
+        );
+      }
       const facetValues = dataChunks.facets[facetName].map((facet) => {
         const samplingRatios = facet.entries.reduce((acc, entry) => {
           acc[entry.weight] = (acc[entry.weight] || 0) + 1;
@@ -540,17 +587,32 @@ Core Facets:
 
 Checkpoint-Specific Facets (source):
   navigate.source          - Navigation source
+  enter.source             - External referrer / traffic source
   click.source             - Clicked element selector
   viewblock.source         - Viewed content block
   fill.source              - Form field filled
   loadresource.source      - Resource loaded
   missingresource.source   - URL of failed resource (404, 405, etc.)
+  cwv-lcp.source           - LCP element selector (e.g. img, .body-m)
+  utm.source               - UTM parameter keys/values
+  language.source          - Page language source (e.g. en-US)
+  consent.source           - Consent provider
 
 Checkpoint-Specific Facets (target):
   click.target             - Click destination URL
   viewmedia.target         - Media viewed
   loadresource.target      - Load time of network resource in ms (e.g. 250, 1200)
   missingresource.target   - HTTP status code of failed resource (e.g. 404, 405)
+  utm.target               - UTM target values
+  language.target          - Page language target (e.g. en-US, pt-BR, en-GB)
+  consent.target           - Consent state (show/hidden/accept/reject/suppressed)
+
+Visibility (foreground/background) — read 'target' on navigation checkpoints
+  (values: visible = foreground tab, hidden = background tab/prerender):
+  enter.target             - Visibility at page enter
+  navigate.target          - Visibility on internal navigation
+  back_forward.target      - Visibility on back/forward navigation
+  reload.target            - Visibility on reload
 
 Time:
   period            - Calendar date of the bundle (YYYY-MM-DD); use with --facet-values for daily trends
@@ -580,8 +642,13 @@ Available Series
   cls               - Cumulative Layout Shift (p75)
   inp               - Interaction to Next Paint (p75)
   ttfb              - Time to First Byte (p75)
-  timeOnPage        - Time on page (derived from event timeDeltas)
-  formBlockLoadTime - Form-block load time (min/max/p50/p75/p95)`);
+  timeOnPage        - Time on page (derived from event timeDeltas; mean/p50/p75)
+  formBlockLoadTime - Form-block load time (min/max/p50/p75/p95)
+  visits            - Weighted count of visits (session starts) -> {sum}
+  bounces           - Weighted count of bounces (visits with no click) -> {sum}
+  engagement        - Weighted count of engaged page views -> {sum}
+  earned            - Weighted count of earned visits (not paid/owned) -> {sum}
+  organic           - Weighted count of organic visits (not paid) -> {sum}`);
     process.exit(0);
   }
   if (args.includes("--help") || args.includes("-h") || args.length === 0) {
@@ -600,7 +667,7 @@ Arguments:
 Options:
   --query <json>            Filter query as JSON, e.g. '{"url":["/home"]}'
   --facet-values <name>     Get values for a facet instead of a count
-  --series <csv>            Series metrics to include (lcp,cls,inp,formBlockLoadTime)
+  --series <csv>            Series metrics to include (lcp,cls,inp,ttfb,timeOnPage,visits,bounces,engagement,earned,organic,formBlockLoadTime)
   --interval <granularity>  hourly | daily | monthly; omit for auto-selection
   --domainkey <key>         Domain key to use directly, bypassing DOMAINKEY_FILE / RUM_ADMIN_KEY lookup
   --output <path>           Write result JSON to file instead of stdout

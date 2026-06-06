@@ -379,6 +379,72 @@ dataChunks.filter = {
 
 ---
 
+### 17. `cwv-lcp.source`
+**Combiner**: `some` | **Negative Support**: ❌ No
+
+**What it does**: Extracts the CSS selector / element type of the Largest Contentful Paint element from `cwv-lcp` events (e.g. `img`, `video`, `.body-m`, `#drop-zone .verb-heading`). Use to identify which element drives LCP.
+
+**Facet-values Example**:
+```bash
+--query '{"checkpoint":["cwv-lcp"]}' --facet-values cwv-lcp.source
+```
+
+---
+
+### 18. `utm.source` / `utm.target`
+**Combiner**: `some` | **Negative Support**: ❌ No
+
+**What it does**: Extracts the UTM parameter keys/values from `utm` checkpoint events. `utm.source` returns the param keys (e.g. `utm_campaign`, `utm_source`, `utm_medium`, `utm_content`); `utm.target` returns the corresponding values. For classified paid/owned/earned channels prefer `acquisitionSource`.
+
+**Facet-values Example**:
+```bash
+--query '{"checkpoint":["utm"]}' --facet-values utm.source
+--query '{"checkpoint":["utm"]}' --facet-values utm.target
+```
+
+---
+
+### 19. `language.source` / `language.target`
+**Combiner**: `some` | **Negative Support**: ❌ No
+
+**What it does**: Extracts page-language locale data from `language` checkpoint events. `language.target` returns the locale codes (e.g. `en-US`, `pt-BR`, `en-GB`, `en-IN`); `language.source` returns the language detection source.
+
+**Facet-values Example**:
+```bash
+--query '{"checkpoint":["language"]}' --facet-values language.target
+```
+
+---
+
+### 20. `consent.source` / `consent.target`
+**Combiner**: `some` | **Negative Support**: ❌ No
+
+**What it does**: Extracts consent-dialog data from `consent` checkpoint events. `consent.source` returns the consent provider; `consent.target` returns the consent state — observed values: `show`, `hidden`, `accept`, `reject`, `suppressed`. Useful as a proxy for cookie-banner exposure / acceptance.
+
+**Facet-values Example**:
+```bash
+--query '{"checkpoint":["consent"]}' --facet-values consent.target
+```
+
+---
+
+### 21. Visibility (foreground/background): `enter.target` / `navigate.target` / `back_forward.target` / `reload.target`
+**Combiner**: `some` | **Negative Support**: ❌ No
+
+**What it does**: On the **navigation checkpoints** (`enter`, `navigate`, `back_forward`, `reload`), the standard `target` field carries the page **visibility state** at load:
+- `visible` — foreground tab (the user is looking at the page)
+- `hidden` — background tab / prerender / opened-in-background
+
+This is a clean binary on these four checkpoints only (0 "other" values). It reproduces the report's foreground-vs-background-tab split. **Do not** read `target` globally for visibility — on other checkpoints `target` means something else (consent state, click destination, media URL, error text).
+
+**Facet-values Example**:
+```bash
+# foreground/background split at page enter (e.g. visible ~75% / hidden ~25%)
+--query '{"checkpoint":["enter"]}' --facet-values enter.target
+```
+
+---
+
 ## Understanding Combiners
 
 Each facet uses a combiner strategy that determines how multiple filter values are matched:
@@ -499,6 +565,21 @@ dataChunks.filter = {
 ### Navigation & Traffic
 - `navigate.source` - Internal referrer URL (page navigated from) (every)
 - `enter.source` - External referrers/traffic sources (some)
+- `acquisitionSource` - Classified paid/owned/earned source (some)
+- `utm.source` / `utm.target` - UTM param keys / values (some)
+
+### Visibility (foreground/background — `target` on navigation checkpoints)
+- `enter.target` - visible (foreground) / hidden (background) at page enter (some)
+- `navigate.target` - visibility on internal navigation (some)
+- `back_forward.target` - visibility on back/forward navigation (some)
+- `reload.target` - visibility on reload (some)
+
+### Content & Performance
+- `cwv-lcp.source` - LCP element selector (e.g. img, .body-m) (some)
+- `language.source` / `language.target` - Page language source / locale (some)
+
+### Consent
+- `consent.source` / `consent.target` - Consent provider / state (show/hidden/accept/reject/suppressed) (some)
 
 ### Resources
 - `loadresource.source` - Loaded resources (some)

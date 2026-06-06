@@ -53,17 +53,17 @@ These are the **built-in series** provided by `@adobe/rum-distiller`. Not all ar
 | Series | Returns | Description | In optel-query? |
 |--------|---------|-------------|:---:|
 | **pageViews** | `number` | Count of page views (impressions). Pre-rendering is counted as a page view. | ✅ |
-| **visits** | `number` | Count of visits (page view that does not follow an internal link; session start). | ❌ |
-| **bounces** | `number` | Count of bounces (visit with no click events). | ❌ |
+| **visits** | `number` | Count of visits (page view that does not follow an internal link; session start). | ✅ |
+| **bounces** | `number` | Count of bounces (visit with no click events). | ✅ |
 | **lcp** | `number` | Largest Contentful Paint (time for largest contentful element to load). | ✅ |
 | **cls** | `number` | Cumulative Layout Shift (sum of layout shifts in the page view). | ✅ |
 | **inp** | `number` | Interaction to Next Paint (time to next paint after an interaction). | ✅ |
 | **ttfb** | `number` | Time to First Byte. | ✅ |
-| **engagement** | `number` | Count of "engaged" page views (at least some interaction or 4+ viewmedia/viewblock events). | ❌ |
-| **earned** | `number` | Count of earned visits (not paid or owned). | ❌ |
-| **organic** | `number` | Count of organic visits (not paid). | ❌ |
+| **engagement** | `number` | Count of "engaged" page views (at least some interaction or 4+ viewmedia/viewblock events). | ✅ |
+| **earned** | `number` | Count of earned visits (not paid or owned). | ✅ |
+| **organic** | `number` | Count of organic visits (not paid). | ✅ |
 
-**Note**: `visits`, `bounces`, `engagement`, `earned`, and `organic` exist in the rum-distiller library but are **not registered** in `optel-query.jsh`. They cannot be queried via `--series`. To add support, the script would need additional `dataChunks.addSeries(...)` calls.
+**Note**: `visits`, `bounces`, `engagement`, `earned`, and `organic` are **registered** in `optel-query.jsh` and queryable via `--series`. These are **weighted-count** series — the underlying rum-distiller series returns the bundle `weight` when the bundle qualifies (else 0), so the meaningful aggregate is the **`.sum`**. The CLI emits them as `{ sum: <weighted count> }` (same field on both the `totals[name]` query path and the `facet.metrics[name]` facet path).
 
 ---
 
@@ -153,6 +153,64 @@ The following series are **actually added** inside `skills/optel-explorer/script
 
 **Use when**: User asks about TTFB, server response time, or backend latency (Core Web Vitals). Pair with `checkpoint: ['cwv-ttfb']` filter to restrict to bundles that have a TTFB measurement.
 
+**CLI output**: emitted as `{ p75: "<value>" }` (or `"N/A"` when sample count < 10), via the `seriesValues.ttfb` formatter.
+
+---
+
+### 8. `visits`
+
+**Source**: `@adobe/rum-distiller` → `series.visits`
+
+**What it does**: Counts visits (session starts) — a page view that does not follow an internal link. Returns the bundle `weight` when the bundle is a visit, else 0.
+
+**Totals / CLI output**: `dataChunks.totals.visits.sum` is the weighted visit count. The CLI emits `{ sum: <weighted count> }`.
+
+**Use when**: KPI "Visits" tile, bounce-rate / pages-per-visit ratios.
+
+---
+
+### 9. `bounces`
+
+**Source**: `@adobe/rum-distiller` → `series.bounces`
+
+**What it does**: Counts bounces (a visit with no click events). Returns bundle `weight` when the bundle is a bouncing visit, else 0.
+
+**Totals / CLI output**: `dataChunks.totals.bounces.sum`; emitted as `{ sum: <weighted count> }`. Bounce rate = `bounces.sum / visits.sum`.
+
+---
+
+### 10. `engagement`
+
+**Source**: `@adobe/rum-distiller` → `series.engagement`
+
+**What it does**: Counts "engaged" page views (at least one click, or 4+ viewmedia/viewblock events). Returns bundle `weight` when engaged, else 0.
+
+**Totals / CLI output**: `dataChunks.totals.engagement.sum`; emitted as `{ sum: <weighted count> }`. Engagement rate = `engagement.sum / pageViews.sum`.
+
+---
+
+### 11. `earned`
+
+**Source**: `@adobe/rum-distiller` → `series.earned`
+
+**What it does**: Counts earned visits (neither paid nor owned). Weighted count.
+
+**Totals / CLI output**: `dataChunks.totals.earned.sum`; emitted as `{ sum: <weighted count> }`.
+
+---
+
+### 12. `organic`
+
+**Source**: `@adobe/rum-distiller` → `series.organic`
+
+**What it does**: Counts organic visits (not paid). Weighted count.
+
+**Totals / CLI output**: `dataChunks.totals.organic.sum`; emitted as `{ sum: <weighted count> }`.
+
+---
+
+> **Note on `timeOnPage`**: registered (entry 3 above), with a `seriesValues` formatter; emitted as `{ mean, p50, p75 }`.
+
 ---
 
 ## Summary
@@ -160,7 +218,7 @@ The following series are **actually added** inside `skills/optel-explorer/script
 - **Series** = numeric metric per bundle; registered with `addSeries(name, seriesValueFn)`.
 - **Totals** = aggregates (count, sum, mean, min, max, median, stddev, percentiles) per series over filtered bundles.
 - **RUM Distiller** provides: pageViews, visits, bounces, lcp, cls, inp, ttfb, engagement, earned, organic.
-- **This project** registers: **pageViews**, **formBlockLoadTime**, **timeOnPage**, **lcp**, **cls**, **inp**, **ttfb**. The query CLI returns the weighted **pageViews** sum as the main numeric **`result`**, always includes **`samplingRatios`** (how many samples at each weight: 100 = 1 per 100 views, 10 = 1 per 10, 1 = full sampling), and can include other **series** via `--series` (e.g. `lcp`, `cls`, `inp`, `ttfb`, `formBlockLoadTime`). **`--facet-values`** responses use weighted totals for **`totalPageViews`**, **`filteredPageViews`**, and **`facetValues[].count`**, and include **`samplingRatios`** / **`filteredSamplingRatios`** plus per-row **`facetValues[].samplingRatios`** for **bundle counts** per weight.
+- **This project** registers: **pageViews**, **formBlockLoadTime**, **timeOnPage**, **lcp**, **cls**, **inp**, **ttfb**, **visits**, **bounces**, **engagement**, **earned**, **organic**. The query CLI returns the weighted **pageViews** sum as the main numeric **`result`**, always includes **`samplingRatios`** (how many samples at each weight: 100 = 1 per 100 views, 10 = 1 per 10, 1 = full sampling), and can include other **series** via `--series` (e.g. `lcp`, `cls`, `inp`, `ttfb`, `formBlockLoadTime`). **`--facet-values`** responses use weighted totals for **`totalPageViews`**, **`filteredPageViews`**, and **`facetValues[].count`**, and include **`samplingRatios`** / **`filteredSamplingRatios`** plus per-row **`facetValues[].samplingRatios`** for **bundle counts** per weight.
 
 When building queries, use **facets** to filter; series determine which **metrics** appear under **`series`** in the CLI output. The primary traffic number is always the weighted pageViews total plus the sampling breakdown.
 
