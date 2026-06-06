@@ -7,41 +7,130 @@
 // Requirements:
 //   - https://aemcs-workspace.adobe.com must be open in a browser tab and logged in
 
-const fsx = require("fs");
+const rawFs = require("fs");
+const fsx = rawFs.promises || rawFs;
 const AEMCS_URL = "https://aemcs-workspace.adobe.com";
-const TMP_RESULT = "/tmp/optel-explorer-result.txt";
+
+// Scratch-file paths, resolved lazily by initTmpDir() before first use. `/tmp` is
+// NOT writable inside the optel-explorer scoop sandbox (the scoop can only write
+// /optel, /shared, /scoops/optel-explorer), which previously made every generate
+// fail with `ENOENT: /tmp/optel-explorer-tabs.txt` before it could even look for the
+// aemcs tab. We write flat files into the chosen dir and probe writability with the
+// ASYNC fs API (the VFS shim in this runtime does not support fs.*Sync reliably —
+// the rest of the script already uses `await fsx.writeFile/readFile`).
+let TMP_DIR = "/tmp";
+let TMP_RESULT = `${TMP_DIR}/optel-explorer-result.txt`;
+let TMP_TABS = `${TMP_DIR}/optel-explorer-tabs.txt`;
+let TMP_PROBE = `${TMP_DIR}/optel-explorer-probe.txt`;
+
+async function initTmpDir() {
+  const candidates = [
+    typeof process !== "undefined" && process.env && process.env.OPTEL_TMP_DIR,
+    "/optel",
+    "/shared",
+    "/scoops/optel-explorer",
+    "/tmp"
+  ].filter(Boolean);
+  for (const dir of candidates) {
+    try {
+      const probe = `${dir}/.optel-write-probe`;
+      await fsx.writeFile(probe, "ok");
+      try { await fsx.unlink(probe); } catch (e) { /* leftover probe is harmless */ }
+      TMP_DIR = dir;
+      break;
+    } catch (e) { /* try next */ }
+  }
+  TMP_RESULT = `${TMP_DIR}/optel-explorer-result.txt`;
+  TMP_TABS = `${TMP_DIR}/optel-explorer-tabs.txt`;
+  TMP_PROBE = `${TMP_DIR}/optel-explorer-probe.txt`;
+  return TMP_DIR;
+}
 
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-async function findAemcsTab() {
-  exec("playwright-cli tab-list > /tmp/optel-explorer-tabs.txt 2>&1");
+// Shared domain-key save helper. Reads the existing key store (default {} if
+// missing), sets/updates the entry for `domain`, and writes it back with 2-space
+// indent. Uses the ASYNC fs API only — the VFS shim in this runtime does NOT
+// support fs.*Sync reliably (the rest of this script already awaits fsx.*).
+const DOMAINKEY_FILE = (typeof process !== "undefined" && process.env && process.env.DOMAINKEY_FILE)
+  || (typeof exec !== "undefined" ? "/optel/domainkey.json" : `${process.env.HOME}/.optel/domainkey.json`);
+async function saveDomainKey(domain, key) {
+  let existing = {};
+  try {
+    existing = JSON.parse(await fsx.readFile(DOMAINKEY_FILE).catch(() => "{}"));
+  } catch (e) {
+    existing = {};
+  }
+  existing[domain] = key;
+  const keyDir = DOMAINKEY_FILE.slice(0, DOMAINKEY_FILE.lastIndexOf("/")) || "/";
+  await fsx.mkdir(keyDir, { recursive: true });
+  await fsx.writeFile(DOMAINKEY_FILE, JSON.stringify(existing, null, 2));
+  return DOMAINKEY_FILE;
+}
+
+async function listTabsRaw() {
+  exec(`playwright-cli tab-list > ${TMP_TABS} 2>&1`);
   await sleep(3000);
-  const tabList = await fsx.readFile("/tmp/optel-explorer-tabs.txt");
+  return (await fsx.readFile(TMP_TABS)) || "";
+}
+
+// Probe a single aemcs tab: returns true if its CDP session is live and it is the
+// AEM CS Workspace app (so we know it's usable for the authenticated API call).
+async function probeAemcsTab(tabId) {
+  exec(`playwright-cli eval --tab=${tabId} "document.title" > ${TMP_PROBE} 2>&1`);
+  await sleep(2000);
+  const probe = await fsx.readFile(TMP_PROBE);
+  return !!(probe && probe.includes("AEM CS Workspace"));
+}
+
+function extractAemcsTabIds(tabList) {
+  // Collect all aemcs tab IDs — may be multiple, some with stale CDP sessions.
+  // Try most-recently-opened first (last in list).
+  return [...tabList.matchAll(/\[([A-F0-9]+)\] https:\/\/aemcs-workspace\.adobe\.com/g)]
+    .map(m => m[1])
+    .reverse();
+}
+
+// List aemcs tabs and return the first one whose page is ready (live CDP session +
+// "AEM CS Workspace" title). Returns null if none are ready right now.
+async function findReadyAemcsTab() {
+  const tabList = await listTabsRaw();
   if (!tabList) {
     console.error("ERROR: playwright-cli not available");
     process.exit(1);
   }
-  // Collect all aemcs tab IDs — may be multiple, some with stale CDP sessions
-  const matches = [...tabList.matchAll(/\[([A-F0-9]+)\] https:\/\/aemcs-workspace\.adobe\.com/g)];
-  if (!matches.length) {
-    console.error("ERROR: No aemcs-workspace.adobe.com tab found.");
-    console.error("Please open https://aemcs-workspace.adobe.com and log in, then retry.");
-    process.exit(1);
+  for (const tabId of extractAemcsTabIds(tabList)) {
+    if (await probeAemcsTab(tabId)) return tabId;
   }
-  // Try each tab in reverse order (most recently opened last in list = try last-opened first)
-  const tabIds = matches.map(m => m[1]).reverse();
-  for (const tabId of tabIds) {
-    exec(`playwright-cli eval --tab=${tabId} "document.title" > /tmp/optel-explorer-probe.txt 2>&1`);
-    await sleep(2000);
-    const probe = await fsx.readFile("/tmp/optel-explorer-probe.txt");
-    if (probe && probe.includes("AEM CS Workspace")) {
-      return tabId;
-    }
+  return null;
+}
+
+async function findAemcsTab() {
+  // 1) Fast path: a ready aemcs tab already exists.
+  let ready = await findReadyAemcsTab();
+  if (ready) return ready;
+
+  // 2) Auto-open one. The SPA needs time to navigate, run auth redirects, and
+  //    register its CDP session; opening is async and the tab may not appear in the
+  //    very next tab-list, so we POLL (re-list + probe) rather than wait a single
+  //    fixed interval. The user must be LOGGED IN for the later API call to work;
+  //    auto-open only handles the "tab missing / not yet ready" case.
+  console.error(`No ready aemcs-workspace.adobe.com tab — opening ${AEMCS_URL} ...`);
+  exec(`playwright-cli open ${AEMCS_URL} > ${TMP_PROBE} 2>&1`);
+
+  const POLL_INTERVAL_MS = 3000;
+  const MAX_POLLS = 12; // ~36s total, enough for cold SPA load + auth redirect
+  for (let attempt = 1; attempt <= MAX_POLLS; attempt += 1) {
+    await sleep(POLL_INTERVAL_MS);
+    ready = await findReadyAemcsTab();
+    if (ready) return ready;
   }
-  console.error("ERROR: All aemcs-workspace.adobe.com tabs have stale CDP sessions.");
-  console.error("Please reload https://aemcs-workspace.adobe.com and retry.");
+
+  console.error("ERROR: An aemcs-workspace.adobe.com tab could not be made ready.");
+  console.error("It may still be loading, the session may be stale, or you may not be logged in.");
+  console.error("Please open https://aemcs-workspace.adobe.com, ensure you are logged in, then retry.");
   process.exit(1);
 }
 
@@ -83,6 +172,7 @@ async function cmdGenerate(domain) {
     process.exit(1);
   }
 
+  await initTmpDir();
   const tabId = await findAemcsTab();
   console.log(`Generating OpTel domain key for: ${domain}`);
 
@@ -112,15 +202,12 @@ async function cmdGenerate(domain) {
     console.log(`Key:       ${parsed.domainKey}`);
     console.log(`Status:    success`);
 
-    // Optionally save to domainkey.json
-    const keyFile = "/optel/domainkey.json";
+    // Save to domainkey.json via the shared helper.
     try {
-      const existing = JSON.parse(await fsx.readFile(keyFile).catch(() => "{}"));
-      existing[domain] = parsed.domainKey;
-      await fsx.writeFile(keyFile, JSON.stringify(existing, null, 2));
+      const keyFile = await saveDomainKey(domain, parsed.domainKey);
       console.log(`Saved:     ${keyFile}`);
     } catch (e) {
-      console.log(`(Could not save to ${keyFile}: ${e.message})`);
+      console.log(`(Could not save to ${DOMAINKEY_FILE}: ${e.message})`);
     }
   } else if (parsed.status === "failed" || parsed.status === "no_data" || (result.body && result.body.includes("No data found"))) {
     console.error(`ERROR: No RUM data found for domain "${domain}".`);
@@ -133,23 +220,43 @@ async function cmdGenerate(domain) {
   }
 }
 
+async function cmdAddDomainKey(domain, key) {
+  if (!domain || !key) {
+    console.error("Usage: optel-explorer add-domain-key <domain> <key>");
+    console.error("Example: optel-explorer add-domain-key applyonline.hdfc.bank.in <key>");
+    process.exit(1);
+  }
+  await saveDomainKey(domain, key);
+  console.log(`Saved key for ${domain} to ${DOMAINKEY_FILE}`);
+}
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
 const command = args[0];
 
-if (command === "generate") {
-  await cmdGenerate(args[1]);
-} else if (!command || command === "help" || command === "--help") {
-  console.log("optel-explorer — AEM CS Workspace CLI");
-  console.log("");
-  console.log("Commands:");
-  console.log("  generate <domain>    Generate an OpTel domain key for a domain");
-  console.log("");
-  console.log("Requirements:");
-  console.log("  aemcs-workspace.adobe.com must be open in a logged-in browser tab");
-} else {
-  console.error("Unknown command: " + command);
-  console.error("Run 'optel-explorer help' for usage.");
-  process.exit(1);
+async function main() {
+  if (command === "generate") {
+    await cmdGenerate(args[1]);
+  } else if (command === "add-domain-key") {
+    await cmdAddDomainKey(args[1], args[2]);
+  } else if (!command || command === "help" || command === "--help") {
+    console.log("optel-explorer — AEM CS Workspace CLI");
+    console.log("");
+    console.log("Commands:");
+    console.log("  generate <domain>              Generate an OpTel domain key for a domain");
+    console.log("  add-domain-key <domain> <key>  Save a domain key to the local key store (/optel/domainkey.json)");
+    console.log("");
+    console.log("Requirements:");
+    console.log("  aemcs-workspace.adobe.com must be open in a logged-in browser tab");
+  } else {
+    console.error("Unknown command: " + command);
+    console.error("Run 'optel-explorer help' for usage.");
+    process.exit(1);
+  }
 }
+
+return main().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

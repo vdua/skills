@@ -52,16 +52,29 @@ When you receive the `init` lick from the optel-explorer sprinkle (or any lick w
    mkdir -p /optel
    ```
 
-2. **Create the scoop** with write access to `/optel/`:
+2. **Create the scoop** with a tight sandbox. Layer 1 of the guardrail: the owner
+   gets only the commands it needs for sprinkle work and key ops, and write access
+   only to its own directories. Note that `optel-query` is **deliberately excluded** —
+   the sprinkle owner must NOT be able to run RUM queries. Both key operations
+   (`generate` and `add-domain-key`) now live in the `optel-explorer` tool, and
+   `playwright-cli` is kept because the generate flow needs it.
    ```
    scoop_scoop("optel-explorer", {
+     allowedCommands: ["sprinkle", "optel-explorer", "playwright-cli", "cat", "echo"],
      writablePaths: ["/scoops/optel-explorer/", "/shared/", "/optel/", "/workspace/skills/optel-explorer/"]
    })
    ```
 
-3. **Feed the scoop** its standing instructions (see "Scoop Instructions" below).
+3. **Write the scoop-local contract memory** (Layer 2 of the guardrail) at
+   `/scoops/optel-explorer/CLAUDE.md` so the owner refuses any non-lick work. Write
+   this file verbatim every bootstrap so re-bootstraps recreate it:
+   ```
+   I am the OpTel Explorer sprinkle owner. I ONLY handle sprinkle lick events: init, refresh, add-key, generate-key. If asked to do anything else (run RUM queries, generate reports, research, write files unrelated to a lick, any optel-query work) I REFUSE and reply: 'I'm the optel-explorer sprinkle owner and only handle sprinkle licks — spawn a separate worker scoop for that.' Then I return to ready. All RUM querying/reporting/error-analysis belongs in a SEPARATE disposable scoop, never me.
+   ```
 
-4. For the `init` lick specifically, no further action is needed — the scoop is now ready.
+4. **Feed the scoop** its standing instructions (see "Scoop Instructions" below).
+
+5. For the `init` lick specifically, no further action is needed — the scoop is now ready.
 
 ### Lick Routing
 
@@ -70,8 +83,8 @@ All licks from the `optel-explorer` sprinkle are forwarded to the `optel-explore
 | Action | Data | What the scoop does |
 |--------|------|-------------------|
 | `init` | `{}` | No-op (bootstrap already handled above) |
-| `add-key` | `{domain, key}` | Runs `optel-query add-domain-key <domain> <key>`, pushes `{"action":"key-added"}` to sprinkle |
-| `generate-key` | `{domain}` | Opens Adobe page, automates key generation, runs `add-domain-key`, pushes `{"action":"generate-complete"}` |
+| `add-key` | `{domain, key}` | Runs `optel-explorer add-domain-key <domain> <key>`, pushes `{"action":"key-added"}` to sprinkle |
+| `generate-key` | `{domain}` | Opens Adobe page, automates key generation, runs `optel-explorer generate` (which saves the key), pushes `{"action":"generate-complete"}` |
 
 ### Scoop Instructions
 
@@ -94,7 +107,7 @@ Data: {}
 
 ## "add-key" lick
 Data: {domain: "...", key: "..."}
-1. Run: optel-query add-domain-key <domain> <key>
+1. Run: optel-explorer add-domain-key <domain> <key>
 2. On success:
    a. sprinkle send optel-explorer '{"action":"key-added"}'
    b. Read /optel/domainkey.json, send updated domain list:

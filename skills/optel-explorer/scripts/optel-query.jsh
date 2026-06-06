@@ -32,37 +32,6 @@ var require_domainkey = __commonJS({
       } catch (e) {
       }
     }
-    async function pathExists(p) {
-      try {
-        await fsAsync2.stat(p);
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-    async function saveDomainKey2(domain, key) {
-      let filePath;
-      if (process.env.DOMAINKEY_FILE) {
-        filePath = process.env.DOMAINKEY_FILE;
-        const lastSlash = filePath.lastIndexOf("/");
-        const parentDir = lastSlash > 0 ? filePath.slice(0, lastSlash) : null;
-        if (!await pathExists(filePath) && !(parentDir && await pathExists(parentDir))) {
-          throw new Error(`DOMAINKEY_FILE is set to "${filePath}" but that path does not exist. Unset it or create the directory first.`);
-        }
-      } else {
-        filePath = DEFAULT_DOMAINKEY_FILE;
-        await fsAsync2.mkdir(filePath.slice(0, filePath.lastIndexOf("/")), { recursive: true });
-      }
-      let existing = {};
-      try {
-        const contents = String(await fsAsync2.readFile(filePath));
-        existing = JSON.parse(contents);
-      } catch (e) {
-      }
-      existing[domain] = key;
-      await fsAsync2.writeFile(filePath, JSON.stringify(existing, null, 2));
-      return filePath;
-    }
     async function fetchDomainKey(domain, override) {
       const __dbg = (m) => { if (typeof process !== "undefined" && (process.env.OPTEL_DEBUG || (process.argv || []).includes("--debug"))) process.stderr.write(`[optel-debug] fetchDomainKey: ${m}\n`); };
       __dbg(`start domain=${domain} override=${override ? "yes" : "no"}`);
@@ -76,7 +45,7 @@ var require_domainkey = __commonJS({
         const auth = process.env.RUM_ADMIN_KEY;
         if (!auth) {
           throw new Error(
-            `No domainkey found for "${domain}". Run: optel-query add-domain-key ${domain} <key>  \u2014 or pass --domainkey <key> directly.`
+            `No domainkey found for "${domain}". Run: optel-explorer add-domain-key ${domain} <key>  \u2014 or pass --domainkey <key> directly.`
           );
         }
         let org;
@@ -108,7 +77,7 @@ var require_domainkey = __commonJS({
         throw new Error("Error Getting Domain Key: " + e.message);
       }
     }
-    module2.exports = { fetchDomainKey, saveDomainKey: saveDomainKey2 };
+    module2.exports = { fetchDomainKey };
   }
 });
 
@@ -189,19 +158,25 @@ var require_loader = __commonJS({
       async fetch(apiRequestURL) {
         const __dbg = (m) => { if (typeof process !== "undefined" && (process.env.OPTEL_DEBUG || (process.argv || []).includes("--debug"))) process.stderr.write(`[optel-debug] fetch: ${m}\n`); };
         // Redact the domainkey query param from logs.
-        const __safeUrl = String(apiRequestURL)
+        const __safeUrl = String(apiRequestURL).replace(/([?&]domainkey=)[^&]*/i, "$1<redacted>");
         const __start = Date.now();
-        try {
-          __dbg(`GET ${__safeUrl}`);
-          const resp = await fetch(apiRequestURL);
-          __dbg(`status=${resp.status} for ${__safeUrl} (${Date.now() - __start}ms)`);
-          const json = await resp.json();
-          __dbg(`parsed json; rumBundles=${(json && json.rumBundles ? json.rumBundles.length : 0)} (${Date.now() - __start}ms)`);
-          return json;
-        } catch (err) {
-          __dbg(`ERROR for ${__safeUrl}: ${err && err.message} (${Date.now() - __start}ms) -> returning empty rumBundles`);
-          return { rumBundles: [] };
+        const resp = await fetch(apiRequestURL);
+        __dbg(`status=${resp.status} for ${__safeUrl} (${Date.now() - __start}ms)`);
+        // Surface non-OK HTTP statuses instead of silently returning empty bundles.
+        // Callers decide how to react (e.g. 413 -> retry that day at daily granularity;
+        // 401/403/5xx -> abort and report). Previously every non-2xx (and every network
+        // or parse error) was swallowed as `{ rumBundles: [] }`, which made a hard failure
+        // indistinguishable from a date range that genuinely has no data.
+        if (!resp.ok) {
+          const err = new Error(`RUM bundles API returned HTTP ${resp.status} for ${__safeUrl}`);
+          err.name = "OptelHttpError";
+          err.status = resp.status;
+          err.safeUrl = __safeUrl;
+          throw err;
         }
+        const json = await resp.json();
+        __dbg(`parsed json; rumBundles=${(json && json.rumBundles ? json.rumBundles.length : 0)} (${Date.now() - __start}ms)`);
+        return json;
       }
       async fetchUTCMonth(utcISOString, start, end) {
         const [date] = utcISOString.split("T");
@@ -215,7 +190,21 @@ var require_loader = __commonJS({
         const [date, time] = utcISOString.split("T");
         const datePath = date.split("-").join("/");
         const hour = time.split(":")[0];
-        const { rumBundles } = await this.fetch(this.apiURL(datePath, hour));
+        let rumBundles;
+        try {
+          ({ rumBundles } = await this.fetch(this.apiURL(datePath, hour)));
+        } catch (err) {
+          // A 413 (Payload Too Large) on the hourly endpoint is common for very
+          // high-traffic domains: a single hour of bundles exceeds the API size
+          // limit. Signal the caller (fetchPeriod hourly branch) to retry the whole
+          // day at daily granularity, which is served pre-aggregated and stays under
+          // the limit. Any other HTTP error (401/403/5xx) propagates so the top level
+          // can report it rather than silently returning zero results.
+          if (err && err.status === 413) {
+            return { date, hour, rumBundles: [], __http413: true };
+          }
+          throw err;
+        }
         const { addCalculatedProps } = await loadRumDistillerUtils();
         rumBundles.forEach((b) => addCalculatedProps(b));
         return { date, hour, rumBundles: filterByDateRange(rumBundles, start, end) };
@@ -257,7 +246,19 @@ var require_loader = __commonJS({
           for (const chunk of chunks) {
             __dbg(`hourly: fetching chunk ${++__ci}/${chunks.length} (${chunk.length} hours) in parallel...`);
             const bundles = await Promise.all(chunk.map((date) => this.fetchUTCHour(date, null, null)));
-            allBundles.push(...bundles);
+            // If any hour of this day returned 413, the hourly endpoint can't serve
+            // this domain at hourly granularity. Drop the (empty) hourly buckets for the
+            // day and refetch the whole day once at daily granularity. The hourly buckets
+            // that DID succeed for the same day are also discarded to avoid double-counting,
+            // since the daily fetch already covers the entire day.
+            if (bundles.some((b) => b && b.__http413)) {
+              const dayISO = chunk[0];
+              __dbg(`hourly: chunk ${__ci}/${chunks.length} hit HTTP 413; falling back to daily fetch for ${String(dayISO).split("T")[0]}`);
+              const dayBucket = await this.fetchUTCDay(dayISO, null, null);
+              allBundles.push(dayBucket);
+            } else {
+              allBundles.push(...bundles);
+            }
             __dbg(`hourly: chunk ${__ci}/${chunks.length} done; cumulative period-buckets=${allBundles.length}`);
           }
         } else if (diff <= 1e3 * 60 * 60 * 24 * 31 && !interval || interval === "daily") {
@@ -513,7 +514,6 @@ var require_query = __commonJS({
 var rawFs = require("fs");
 var fsAsync = rawFs.promises || rawFs;
 var { query, getFacetValues } = require_query();
-var { saveDomainKey } = require_domainkey();
 var VALID_INTERVALS = ["hourly", "daily", "monthly"];
 // --- DEBUG INSTRUMENTATION ---
 // Enable with OPTEL_DEBUG=1 (env) or by passing --debug as a CLI flag.
@@ -591,18 +591,11 @@ optel-query CLI
 
 Usage:
   optel-query.jsh <domain> <startDate> <endDate> [options]
-  optel-query.jsh add-domain-key <domain> <key>
 
 Arguments:
   domain       Domain to query (e.g., 'example.com')
   startDate    Start date in YYYY-MM-DD format
   endDate      End date in YYYY-MM-DD format
-
-Subcommands:
-  add-domain-key <domain> <key>
-                Save a domain key to the local key store (/optel/domainkey.json
-                or DOMAINKEY_FILE). Run this once from the terminal \u2014 the key
-                is stored on disk and never needs to appear in the chat.
 
 Options:
   --query <json>            Filter query as JSON, e.g. '{"url":["/home"]}'
@@ -665,46 +658,6 @@ Options:
 async function main() {
   const args = process.argv.slice(2);
   dbg("argv => " + args[0])
-  if (args[0] === "add-domain-key") {
-    if (args.includes("--help") || args.includes("-h")) {
-      console.log(`
-optel-query add-domain-key
-==========================
-
-Usage:
-  optel-query add-domain-key <domain> <key>
-
-Saves a domain key to the local key store so queries can run without
-passing --domainkey each time.
-
-  domain    Domain to store the key for (e.g. 'example.com')
-  key       The domain key value
-
-Key store location (in order of precedence):
-  1. DOMAINKEY_FILE env var (if set and path exists)
-  2. /optel/domainkey.json (SLICC VirtualFS default)
-
-In SLICC: run this from the terminal panel, not the chat window.
-The key is written to disk and never appears in conversation history.
-`);
-      process.exit(0);
-    }
-    const domain = args[1];
-    const key = args[2];
-    if (!domain || !key) {
-      console.error("Usage: optel-query add-domain-key <domain> <key>");
-      process.exit(1);
-    }
-    let filePath;
-    try {
-      filePath = await saveDomainKey(domain, key);
-    } catch (e) {
-      console.error(e.message);
-      process.exit(1);
-    }
-    console.log(`Saved domain key for "${domain}" to ${filePath}`);
-    return;
-  }
   const config = parseArgs();
   dbg(`parsed args: domain=${config.domain} start=${config.startDate} end=${config.endDate} facet=${config.facetValues || "-"} series=[${config.series.join(",")}] interval=${config.interval || "auto"} output=${config.output || "stdout"}`);
   console.log("Fetching RUM data...");

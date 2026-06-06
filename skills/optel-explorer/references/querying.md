@@ -65,6 +65,12 @@ With `--facet-values`:
 ## Granularity (`--interval`)
 
 - **Default: omit `--interval`.** The loader auto-selects — hourly for ≤7-day ranges, daily for ≤31-day ranges, monthly for longer. Correct for almost every question.
+
+### High-traffic domains and HTTP 413 (auto-fallback)
+
+Very high-traffic domains (e.g. `www.adobe.com`) can exceed the bundles API size limit on the **hourly** endpoint, which returns **HTTP 413 (Payload Too Large)**. The loader handles this automatically: when **any hour of a day** returns 413 in hourly mode, it transparently **refetches that whole day at daily granularity** (the daily endpoint is served pre-aggregated and stays under the limit). You get correct data with no flags.
+
+Other non-OK HTTP statuses (401/403 → bad/expired key; 5xx → server error; network/parse failures) are now **surfaced as errors** rather than silently returning empty results. A genuinely empty date range still returns `result: 0` with no error — so "0 with no error" now reliably means "no data," not "a request failed."
 - **Pass `--interval hourly`** only on explicit user cues that reject downsampling:
   - "don't downsample" / "no downsampling"
   - "use full data" / "full fidelity"
