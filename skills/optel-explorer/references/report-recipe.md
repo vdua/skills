@@ -33,6 +33,46 @@ This recipe assembles a full narrative OpTel report that mirrors the on-screen
 - For high-traffic domains the hourly endpoint 413s; the script auto-falls-back
   to daily — do NOT change interval handling to "fix" this.
 
+## Use `--batch` for the whole report (one fetch, not ~25)
+
+`optel-query` re-fetches the entire window on EVERY call. A report runs ~25
+queries, so naively it pulls the same daily bundles ~25× (~750 HTTP requests for
+a 30-day high-traffic domain). **Use `--batch` instead: it fetches + parses the
+window ONCE and answers every request in-memory** (~30 requests total, one
+DataChunks build).
+
+Write all report questions into one JSON file (array of requests; each is
+`{id?, query?, facetValues?, series?}` — `facetValues` ⇒ a facet request, else a
+count), then make a single call:
+
+```bash
+optel-query $D $S $E --batch /shared/report-queries.json --output /shared/report-results.json
+```
+
+Output shape: `{ "result": { "results": [ { "id", "type", "result" | "error" }, ... ] } }`,
+in input order. A bad request (e.g. unknown facet) is reported as a per-item
+`error` and does NOT abort the batch.
+
+Example batch file (subset — include every section's queries below):
+```json
+[
+  { "id": "pageviews" },
+  { "id": "kpis", "series": ["visits","bounces","engagement","earned","organic"] },
+  { "id": "cwv", "series": ["lcp","cls","inp","ttfb"] },
+  { "id": "errors", "query": {"checkpoint":["error"]} },
+  { "id": "error-sources", "query": {"checkpoint":["error"]}, "facetValues": "error" },
+  { "id": "device", "facetValues": "userAgent" },
+  { "id": "visibility", "query": {"checkpoint":["enter"]}, "facetValues": "enter.target" },
+  { "id": "top-urls", "facetValues": "url" },
+  { "id": "period", "facetValues": "period" }
+]
+```
+
+The query battery in the sections below lists the individual commands for
+reference/readability — but when actually generating a report, fold them ALL
+into a single `--batch` file and run one call. Compute trends from the `period`
+request rather than separate windows where possible (still one fetch).
+
 ---
 
 ## Section 1 — Executive Summary
@@ -164,13 +204,17 @@ State trend direction explicitly only when backed by multiple periods/windows.
 
 ## Worker checklist
 1. Spawn a disposable worker scoop (never `optel-explorer-scoop`) for the queries.
-2. Run the query battery above, capturing each JSON result.
+2. Fold ALL section queries into ONE `--batch` file and run a single
+   `optel-query $D $S $E --batch <file> --output <results>` (one fetch, not ~25).
+   Read back the `results[]` array by `id`.
 3. Compute ratios (bounce, engagement, pages/visit, error rate, funnel steps,
    visibility split).
 4. Label proxies (geography) and trend caveats honestly.
-5. Build the executive report markup (per the design system below) and deliver it
-   as a **SPRINKLE** (see "Sprinkle Output Specification"): a separate, long-lived
-   owner scoop writes the `.shtml` and opens the panel. Dispose of the query worker.
+5. Deliver the executive report as a **SPRINKLE**: a separate, long-lived owner
+   scoop writes the report as a FULL-DOCUMENT-mode `.shtml` (the report IS the
+   document; SLICC iframes it and injects theming), colored with S2 tokens — see
+   the Sprinkle Output Specification — and opens the panel. Dispose of the query
+   worker.
 
 ---
 
@@ -192,15 +236,44 @@ below; only the container is a `.shtml` sprinkle.
   convention.
 
 ## Hard requirements
-- **Self-contained `.shtml`.** Inline the full executive report markup directly
-  into the sprinkle file — do NOT load it from an external file via `readFile`
-  at runtime (the report is a finished artifact; runtime file-loading adds an
-  async failure path and a staleness coupling for no benefit here).
-- **CSS isolation.** The report has its own inline `<style>`. To prevent it
-  clashing with the panel/global sprinkle styles, render the report markup inside
-  a sandboxed `<iframe>` whose `srcdoc` contains the inlined report HTML. The
-  iframe scopes the report's CSS and makes it render exactly as designed. Set the
-  iframe to `width:100%`, `border:none`, and a generous height (e.g. `min-height:90vh`).
+- **The sprinkle is a FULL-DOCUMENT-mode `.shtml`** — the report IS the document.
+  Per the sprinkles SKILL, a `.shtml` that begins with `<!DOCTYPE html>` /
+  `<html>` is rendered by SLICC inside a sandboxed iframe automatically, AND the
+  parent injects its S2 theme tokens + toggles a `.theme-light` class on the
+  sprinkle's `<html>`. So you get CSS isolation AND theming for free.
+  - Do **NOT** hand-roll a nested `<iframe srcdoc=...>` and do **NOT** load the
+    report via `readFile` at runtime. Both re-implement what full-document mode
+    already does; the `srcdoc` route also requires escaping ~30KB into an
+    attribute, which has repeatedly corrupted the file. Just make the report the
+    document.
+- **Theme with S2 tokens — never hard-code colors.** The report's palette MUST be
+  expressed in theme-aware S2 custom properties so it follows light/dark with the
+  app (see `/workspace/skills/sprinkles/style-guide.md`). Mapping:
+  - page bg → `var(--s2-bg-base)`; cards/tiles/header band → `var(--s2-bg-elevated)`
+    (band may tint: `color-mix(in srgb, var(--s2-accent) 12%, var(--s2-bg-elevated))`);
+    zebra/nested → `var(--s2-bg-layer-1/2)`.
+  - text → `var(--s2-content-default)`; muted/labels/footer → `var(--s2-content-secondary)`.
+  - accent (rules, key numbers, neutral bar fills) → `var(--s2-accent)`.
+  - status: good → `var(--s2-positive)`, warning/needs-improvement → `var(--s2-notice)`,
+    critical/poor → `var(--s2-negative)`, info → `var(--s2-informative)`.
+  - subtle tints ("So what:" callouts, tile accents) →
+    `color-mix(in srgb, var(--s2-<semantic>) 8-12%, transparent)`.
+  - text on filled bars → `var(--s2-gray-25)` (never `#fff`).
+  - borders → `1px solid color-mix(in srgb, var(--s2-content-default) 12%, transparent)`.
+  - Set `color-scheme: light dark` on `:root`. Do NOT use
+    `@media (prefers-color-scheme)` for theme colors (desyncs from the parent's
+    class toggle). One-off colors not covered by a token → `light-dark(<l>,<d>)`.
+- **Declare a rail icon** in `<head>`: `<link rel="icon" href="chart-bar" />`.
+- **No external resources** — no CDN fonts, no JS libraries, no remote images.
+  System font stack and inline SVG for charts only.
+- **Write the `.shtml` in ONE clean `write_file` shot.** Never assemble it from
+  shell heredocs / `cat >> file.part` / `sed` escaping pipelines — that corrupted
+  the file previously. (A full HTML document needs no attribute escaping anyway.)
+- **No raw JSON or query commands in the output.** Methodology/caveats in a small
+  footer. Every number must come from the query battery — show "—" for N/A.
+- Optionally ALSO write a standalone self-contained `.html` copy (same markup but
+  with a fixed palette) if a shareable/exportable file is wanted — but the
+  sprinkle deliverable itself is the full-document S2-themed `.shtml`.
 - **No external resources** in the report markup — no CDN fonts, no JS libraries,
   no remote images. System font stack and inline SVG for charts only. (This keeps
   the panel offline-safe and the same markup print/export-clean if ever exported.)
@@ -209,10 +282,52 @@ below; only the container is a `.shtml` sprinkle.
 - **Every number shown must come from the query battery** — never fabricate.
   Where a metric is N/A or a checkpoint is absent, show it honestly (e.g. "—").
 
-## Optional panel chrome
-A minimal panel header (title `OpTel Report — <domain> (<window>)`) above the
-iframe is fine. A "Reload"/"Regenerate" control may use `slicc.lick(...)` routed
-to the owner scoop — but keep chrome minimal; the report is the content.
+## Panel chrome + Download/Export
+
+Keep chrome minimal — the report is the content. A small top toolbar (the report
+title + a "Download report" button) is the expected pattern.
+
+### Required: a "Download report" button (download the standalone .html)
+The S2-themed sprinkle renders correctly only inside SLICC (its `var(--s2-*)`
+tokens are injected by the parent). For a shareable artifact, ALSO write a
+**standalone, self-contained `.html`** alongside the sprinkle: same content/layout
+but with a FIXED palette (concrete hex, no S2 tokens) so it renders anywhere
+(browser, email, print-to-PDF). e.g. `/shared/<domain>-optel-report-<window>.html`.
+
+Wire a "Download report" button that delivers that standalone file directly to the
+user's downloads — entirely client-side, no lick or owner-scoop round-trip. The
+bridge exposes `slicc.readFile(path)`, so the button reads the standalone file and
+triggers a Blob download (the SLICC sprinkle iframe is sandboxed with
+`allow-downloads`, so a programmatic `<a download>` click is honored):
+```html
+<button id="dl-btn" class="sprinkle-btn sprinkle-btn--secondary">Download report</button>
+<script>
+  document.getElementById('dl-btn').addEventListener('click', async function () {
+    var btn = this, orig = btn.textContent;
+    btn.textContent = 'Preparing…'; btn.disabled = true;
+    try {
+      var html = await slicc.readFile('/shared/<domain>-optel-report-<window>.html');
+      var url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+      var a = document.createElement('a');
+      a.href = url; a.download = '<domain>-optel-report-<window>.html';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      btn.textContent = 'Downloaded';
+    } catch (e) {
+      console.error('download failed', e); btn.textContent = 'Download failed';
+    }
+    setTimeout(function () { btn.textContent = orig; btn.disabled = false; }, 1500);
+  });
+</script>
+```
+(Full-document mode auto-injects the bridge; use `slicc`, not `bridge`. For a PDF,
+generate the `.pdf` as a separate step and `readFile`/download that instead.)
+
+So this report flow produces TWO artifacts: the themed sprinkle (viewing in SLICC)
+and the fixed-palette standalone `.html` (download/share) — keep them in sync when
+regenerating. A "Reload"/"Regenerate" control, by contrast, IS a `slicc.lick(...)`
+routed to the owner (it re-runs the query battery); only the file download stays
+client-side.
 
 ## Structure (BLUF — Bottom Line Up Front)
 1. **Header band** — report title, domain, date window, "generated" date.
@@ -268,8 +383,11 @@ of text; let the numbers and the action list carry the weight.
 ## Acceptance
 - The sprinkle is registered and OPEN (`sprinkle list` shows it `[open]`), owned
   by its same-named long-lived scoop (not `optel-explorer`, not the query worker).
-- The report renders inside the panel (iframe `srcdoc`), CSS-isolated, with no
-  external/remote resources and no `readFile` runtime dependency.
+- The `.shtml` is full-document mode (starts with `<!DOCTYPE html>`), with NO
+  hand-rolled nested iframe, no `srcdoc`, and no `readFile`. SLICC iframes it.
+- Colors use S2 tokens (theme-aware); ~0 hard-coded hex; `color-scheme: light dark`
+  on `:root`. The report follows the app light/dark theme.
+- A rail icon is declared (`<link rel="icon" href="chart-bar" />`).
 - Exec Summary + Priority Actions appear first in the report (above the fold).
 - KPI tiles and CWV are color-coded by status.
 - At least the top-N breakdowns (errors, referrers/acquisition, top URLs,

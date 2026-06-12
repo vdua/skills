@@ -66,8 +66,39 @@ async function saveDomainKey(domain, key) {
   existing[domain] = key;
   const keyDir = DOMAINKEY_FILE.slice(0, DOMAINKEY_FILE.lastIndexOf("/")) || "/";
   await fsx.mkdir(keyDir, { recursive: true });
-  await fsx.writeFile(DOMAINKEY_FILE, JSON.stringify(existing, null, 2));
+  await writeJsonTruncating(DOMAINKEY_FILE, existing);
   return DOMAINKEY_FILE;
+}
+
+// Write a JSON object to `path`, guaranteeing the file is truncated first. The VFS
+// shim's writeFile does NOT truncate an in-place overwrite (a shorter payload
+// leaves trailing bytes from the old content → corrupt JSON), and fsx.unlink is
+// undefined in this runtime. The reliable truncation primitive is the shell `rm`,
+// reachable via the `exec` global, which we await via a sentinel file.
+async function writeJsonTruncating(path, obj) {
+  try { exec(`rm -f ${path}`); } catch (e) { /* best-effort */ }
+  // Give the async shell rm a beat to land before we recreate the file.
+  await sleep(150);
+  await fsx.writeFile(path, JSON.stringify(obj, null, 2));
+}
+
+// Remove a domain entry from the key store. Deletes the existing file first so the
+// VFS write truncates cleanly (the shim does not reliably truncate an in-place
+// overwrite), then writes the reduced object back. Returns true if the domain
+// existed and was removed, false if it was not present.
+async function removeDomainKey(domain) {
+  let existing = {};
+  try {
+    existing = JSON.parse(await fsx.readFile(DOMAINKEY_FILE).catch(() => "{}"));
+  } catch (e) {
+    existing = {};
+  }
+  const had = Object.prototype.hasOwnProperty.call(existing, domain);
+  delete existing[domain];
+  const keyDir = DOMAINKEY_FILE.slice(0, DOMAINKEY_FILE.lastIndexOf("/")) || "/";
+  await fsx.mkdir(keyDir, { recursive: true });
+  await writeJsonTruncating(DOMAINKEY_FILE, existing);
+  return had;
 }
 
 async function listTabsRaw() {
@@ -230,6 +261,19 @@ async function cmdAddDomainKey(domain, key) {
   console.log(`Saved key for ${domain} to ${DOMAINKEY_FILE}`);
 }
 
+async function cmdRemoveDomainKey(domain) {
+  if (!domain) {
+    console.error("Usage: optel-explorer remove-domain-key <domain>");
+    process.exit(1);
+  }
+  const had = await removeDomainKey(domain);
+  if (had) {
+    console.log(`Removed key for ${domain} from ${DOMAINKEY_FILE}`);
+  } else {
+    console.log(`No key found for ${domain}; nothing to remove.`);
+  }
+}
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
 const args = process.argv.slice(2);
@@ -240,12 +284,15 @@ async function main() {
     await cmdGenerate(args[1]);
   } else if (command === "add-domain-key") {
     await cmdAddDomainKey(args[1], args[2]);
+  } else if (command === "remove-domain-key") {
+    await cmdRemoveDomainKey(args[1]);
   } else if (!command || command === "help" || command === "--help") {
     console.log("optel-explorer — AEM CS Workspace CLI");
     console.log("");
     console.log("Commands:");
-    console.log("  generate <domain>              Generate an OpTel domain key for a domain");
-    console.log("  add-domain-key <domain> <key>  Save a domain key to the local key store (/optel/domainkey.json)");
+    console.log("  generate <domain>               Generate an OpTel domain key for a domain");
+    console.log("  add-domain-key <domain> <key>   Save a domain key to the local key store (/optel/domainkey.json)");
+    console.log("  remove-domain-key <domain>      Remove a domain key from the local key store");
     console.log("");
     console.log("Requirements:");
     console.log("  aemcs-workspace.adobe.com must be open in a logged-in browser tab");

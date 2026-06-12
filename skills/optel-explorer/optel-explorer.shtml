@@ -8,25 +8,25 @@
   <!-- Section 1: Configured Domains -->
   <div class="sprinkle-card">
     <div class="sprinkle-stack">
-      <div class="sprinkle-row" style="justify-content:space-between">
+      <div class="sprinkle-row" style="justify-content:space-between;align-items:center">
         <h3 class="sprinkle-heading--s">Configured Domains</h3>
-        <button class="sprinkle-btn sprinkle-btn--secondary" onclick="loadDomains()">
+        <button class="sprinkle-btn sprinkle-btn--secondary" id="btn-refresh" onclick="loadDomains()">
           <i data-lucide="refresh-cw" class="sprinkle-icon"></i> Refresh
         </button>
       </div>
-      <div id="domain-list"></div>
+      <div id="domain-list"><div class="sprinkle-empty-state">Loading...</div></div>
     </div>
   </div>
 
   <div class="sprinkle-divider"></div>
 
-  <!-- Section 2: Manual Add Domain Key -->
+  <!-- Section 2: Add Domain Key -->
   <div class="sprinkle-card">
     <div class="sprinkle-stack">
       <h3 class="sprinkle-heading--s">Add Domain Key</h3>
       <input type="text" id="add-domain" class="sprinkle-text-field" placeholder="example.com" />
       <input type="password" id="add-key" class="sprinkle-text-field" placeholder="Domain key (secret)" />
-      <button class="sprinkle-btn sprinkle-btn--primary" onclick="addKey()">
+      <button class="sprinkle-btn sprinkle-btn--primary" id="btn-add" onclick="addKey()">
         <i data-lucide="plus" class="sprinkle-icon"></i> Add Key
       </button>
     </div>
@@ -39,14 +39,14 @@
     <div class="sprinkle-stack">
       <h3 class="sprinkle-heading--s">Generate Key via Adobe</h3>
       <input type="text" id="gen-domain" class="sprinkle-text-field" placeholder="example.com" />
-      <button class="sprinkle-btn sprinkle-btn--primary" onclick="generateKey()">
-        <i data-lucide="external-link" class="sprinkle-icon"></i> Generate Key on Adobe
+      <button class="sprinkle-btn sprinkle-btn--primary" id="btn-gen" onclick="generateKey()">
+        <i data-lucide="key-round" class="sprinkle-icon"></i> Generate Key on Adobe
       </button>
-      <p class="sprinkle-detail">Opens the Adobe RUM key generator. You'll need to log in manually, then automation will enter the domain and capture the generated key.</p>
+      <p class="sprinkle-detail">Requires https://aemcs-workspace.adobe.com to be open and logged in. Automation will call the Adobe RUM API and save the key.</p>
     </div>
   </div>
 
-  <!-- Status message area -->
+  <!-- Status -->
   <div id="status-message" hidden></div>
 </div>
 
@@ -58,29 +58,84 @@
     } else {
       var html = '<div class="sprinkle-stack">';
       domains.forEach(function(domain) {
-        html += '<span class="sprinkle-status-light sprinkle-status-light--positive">' + domain + '</span>';
+        html += '<div class="sprinkle-row" style="justify-content:space-between;align-items:center">'
+              + '<span class="sprinkle-status-light sprinkle-status-light--positive">' + escHtml(domain) + '</span>'
+              + '<button class="sprinkle-btn sprinkle-btn--negative" '
+              + "onclick=\"removeKey('" + escJs(domain) + "')\">Remove</button>"
+              + '</div>';
       });
       html += '</div>';
       container.innerHTML = html;
     }
-    LucideIcons.render();
+    if (typeof LucideIcons !== 'undefined' && LucideIcons.render) LucideIcons.render();
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Escape a domain for safe embedding inside an onclick="removeKey('...')" attribute:
+  // backslash-escape single quotes, then HTML-escape so the double-quoted attribute stays intact.
+  function escJs(s) {
+    return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/&/g,'&amp;').replace(/"/g,'&quot;');
   }
 
   function loadDomains() {
-    slicc.lick({action: 'refresh', data: {}});
+    setLoading('btn-refresh', true);
+    slicc.readFile('/optel/domainkey.json').then(function(text) {
+      setLoading('btn-refresh', false);
+      if (!text || !text.trim()) {
+        renderDomainList([]);
+        return;
+      }
+      try {
+        var data = JSON.parse(text);
+        renderDomainList(Object.keys(data));
+      } catch (e) {
+        showStatus('Could not parse domainkey.json: ' + e.message, 'negative');
+        renderDomainList([]);
+      }
+    }).catch(function(err) {
+      // File missing or unreadable — treat as no domains configured
+      setLoading('btn-refresh', false);
+      renderDomainList([]);
+    });
   }
 
   function addKey() {
     var domain = document.getElementById('add-domain').value.trim();
-    var key = document.getElementById('add-key').value.trim();
+    var key    = document.getElementById('add-key').value.trim();
     if (!domain || !key) {
       showStatus('Please enter both domain and key.', 'notice');
       return;
     }
-    slicc.lick({action: 'add-key', data: {domain: domain, key: key}});
-    document.getElementById('add-domain').value = '';
-    document.getElementById('add-key').value = '';
-    showStatus('Adding key...', 'informative');
+    setLoading('btn-add', true);
+    slicc.exec.spawn(['optel-explorer', 'add-domain-key', domain, key]).then(function(result) {
+      setLoading('btn-add', false);
+      if (result.exitCode === 0) {
+        document.getElementById('add-domain').value = '';
+        document.getElementById('add-key').value = '';
+        loadDomains();
+        showStatus('Domain key added.', 'positive');
+      } else {
+        showStatus(result.stderr || result.stdout || 'Failed to add key.', 'negative');
+      }
+    });
+  }
+
+  function removeKey(domain) {
+    // Route through the CLI, which truncates the key store safely (slicc.writeFile
+    // does not reliably truncate an in-place overwrite and corrupted the file).
+    slicc.exec.spawn(['optel-explorer', 'remove-domain-key', domain]).then(function(result) {
+      if (result.exitCode === 0) {
+        loadDomains();
+        showStatus('Removed ' + domain + '.', 'positive');
+      } else {
+        showStatus(result.stderr || result.stdout || ('Could not remove ' + domain), 'negative');
+      }
+    }).catch(function(err) {
+      showStatus('Could not remove ' + domain + ': ' + (err && err.message ? err.message : err), 'negative');
+    });
   }
 
   function generateKey() {
@@ -89,45 +144,46 @@
       showStatus('Please enter a domain.', 'notice');
       return;
     }
-    slicc.lick({action: 'generate-key', data: {domain: domain}});
-    showStatus('Starting key generation for ' + domain + '...', 'informative');
+    setLoading('btn-gen', true);
+    showStatus('Calling Adobe RUM API for ' + domain + '...', 'informative');
+    slicc.exec.spawn(['optel-explorer', 'generate', domain]).then(function(result) {
+      setLoading('btn-gen', false);
+      if (result.exitCode === 0) {
+        document.getElementById('gen-domain').value = '';
+        loadDomains();
+        showStatus('Key generated and saved for ' + domain + '.', 'positive');
+      } else {
+        showStatus(result.stderr || result.stdout || 'Key generation failed.', 'negative');
+      }
+    });
+  }
+
+  function setLoading(btnId, loading) {
+    var btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.disabled = loading;
+    btn.style.opacity = loading ? '0.6' : '';
   }
 
   function showStatus(message, variant) {
     var el = document.getElementById('status-message');
-    var badgeClass = 'sprinkle-badge';
-    if (variant === 'positive') badgeClass += ' sprinkle-badge--positive';
-    else if (variant === 'negative') badgeClass += ' sprinkle-badge--negative';
-    else if (variant === 'notice') badgeClass += ' sprinkle-badge--notice';
-    else badgeClass += ' sprinkle-badge--informative';
-    el.innerHTML = '<span class="' + badgeClass + '">' + message + '</span>';
+    var cls = 'sprinkle-badge sprinkle-badge--' + (
+      variant === 'positive'    ? 'positive' :
+      variant === 'negative'    ? 'negative' :
+      variant === 'notice'      ? 'notice'   : 'informative'
+    );
+    el.innerHTML = '<span class="' + cls + '">' + escHtml(message) + '</span>';
     el.hidden = false;
-    setTimeout(function() { el.hidden = true; }, 5000);
+    clearTimeout(el._t);
+    el._t = setTimeout(function() { el.hidden = true; }, 5000);
   }
 
-  slicc.on('update', function(data) {
-    if (data.action === 'domains-loaded') {
-      renderDomainList(data.domains || []);
-    }
-    if (data.action === 'key-added') {
-      loadDomains();
-      showStatus('Domain key added successfully.', 'positive');
-    }
-    if (data.action === 'generate-started') {
-      showStatus('Waiting for Adobe login...', 'informative');
-    }
-    if (data.action === 'generate-complete') {
-      loadDomains();
-      showStatus('Key generated and saved.', 'positive');
-    }
-    if (data.action === 'error') {
-      showStatus(data.message || 'An error occurred.', 'negative');
-    }
-  });
+  // Expose handlers on window so inline onclick attributes (static + injected) resolve them
+  window.loadDomains  = loadDomains;
+  window.addKey       = addKey;
+  window.generateKey  = generateKey;
+  window.removeKey    = removeKey;
 
-  // Load domains on init
+  // Load on mount — direct VFS read, no lick
   loadDomains();
-
-  // Fire init lick to bootstrap the scoop
-  slicc.lick({action: 'init', data: {}});
 </script>

@@ -510,8 +510,13 @@ var require_query = __commonJS({
       __dbg("DataChunks built");
       return dc;
     }
-    async function query2(domain, startDate, endDate, queryFilter = {}, series = [], interval, domainKey) {
-      const dataChunks = await getData(domain, startDate, endDate, interval, domainKey);
+    // ── Result computation on an ALREADY-BUILT DataChunks ──────────────────────
+    // These pure(ish) helpers take a built `dataChunks` and compute one result by
+    // (re)setting its filter. Splitting them out lets a single fetched/parsed
+    // DataChunks answer MANY queries in one process (see runBatch2) instead of
+    // re-fetching the whole window per question.
+
+    function computeCount(dataChunks, queryFilter = {}, series = []) {
       dataChunks.filter = queryFilter;
       const out = {
         result: dataChunks.totals.pageViews.sum,
@@ -526,8 +531,8 @@ var require_query = __commonJS({
       }
       return out;
     }
-    async function getFacetValues2(domain, startDate, endDate, facetName, queryFilter = {}, series = [], interval, domainKey) {
-      const dataChunks = await getData(domain, startDate, endDate, interval, domainKey);
+
+    function computeFacetValues(dataChunks, facetName, queryFilter = {}, series = []) {
       const totalPageViews = dataChunks.totals.pageViews.sum;
       const totalSamplingRatios = getSamplingRatios(dataChunks);
       dataChunks.filter = queryFilter;
@@ -553,14 +558,54 @@ var require_query = __commonJS({
       });
       return { facetValues, totalPageViews, filteredPageViews, samplingRatios: totalSamplingRatios, filteredSamplingRatios };
     }
-    module2.exports = { getData, query: query2, getFacetValues: getFacetValues2 };
+
+    async function query2(domain, startDate, endDate, queryFilter = {}, series = [], interval, domainKey) {
+      const dataChunks = await getData(domain, startDate, endDate, interval, domainKey);
+      return computeCount(dataChunks, queryFilter, series);
+    }
+    async function getFacetValues2(domain, startDate, endDate, facetName, queryFilter = {}, series = [], interval, domainKey) {
+      const dataChunks = await getData(domain, startDate, endDate, interval, domainKey);
+      return computeFacetValues(dataChunks, facetName, queryFilter, series);
+    }
+
+    // ── Batch: fetch the window + build DataChunks ONCE, answer N requests ──────
+    // requests: array of { id?, query?, facetValues?, series? }.
+    //   - facetValues present -> a facet-values request (like getFacetValues)
+    //   - otherwise            -> a count request (like query)
+    // Returns { results: [ { id, type, result | error } ] } preserving input order.
+    // One network fetch + one DataChunks build total, regardless of request count.
+    async function runBatch2(domain, startDate, endDate, requests = [], interval, domainKey) {
+      const __dbg = (m) => { if (typeof process !== "undefined" && (process.env.OPTEL_DEBUG || (process.argv || []).includes("--debug"))) process.stderr.write(`[optel-debug] runBatch: ${m}\n`); };
+      const dataChunks = await getData(domain, startDate, endDate, interval, domainKey);
+      __dbg(`DataChunks built once; answering ${requests.length} request(s) in-memory`);
+      const results = [];
+      for (let i = 0; i < requests.length; i += 1) {
+        const req = requests[i] || {};
+        const id = req.id != null ? req.id : i;
+        const series = Array.isArray(req.series) ? req.series : [];
+        const queryFilter = req.query || {};
+        try {
+          if (req.facetValues) {
+            results.push({ id, type: "facetValues", facet: req.facetValues, result: computeFacetValues(dataChunks, req.facetValues, queryFilter, series) });
+          } else {
+            results.push({ id, type: "count", result: computeCount(dataChunks, queryFilter, series) });
+          }
+        } catch (err) {
+          // One bad request (e.g. unknown facet) must not abort the whole batch.
+          results.push({ id, type: req.facetValues ? "facetValues" : "count", error: err && err.message ? err.message : String(err) });
+        }
+      }
+      return { results };
+    }
+
+    module2.exports = { getData, query: query2, getFacetValues: getFacetValues2, runBatch: runBatch2 };
   }
 });
 
 // src/optel-query/cli.js
 var rawFs = require("fs");
 var fsAsync = rawFs.promises || rawFs;
-var { query, getFacetValues } = require_query();
+var { query, getFacetValues, runBatch } = require_query();
 var VALID_INTERVALS = ["hourly", "daily", "monthly"];
 // --- DEBUG INSTRUMENTATION ---
 // Enable with OPTEL_DEBUG=1 (env) or by passing --debug as a CLI flag.
@@ -668,6 +713,13 @@ Options:
   --query <json>            Filter query as JSON, e.g. '{"url":["/home"]}'
   --facet-values <name>     Get values for a facet instead of a count
   --series <csv>            Series metrics to include (lcp,cls,inp,ttfb,timeOnPage,visits,bounces,engagement,earned,organic,formBlockLoadTime)
+  --batch <path>            Answer MANY requests with ONE fetch. <path> is a JSON
+                            file: an array of {id?, query?, facetValues?, series?}
+                            (or {requests:[...]}). The window is fetched and parsed
+                            ONCE; every request is computed in-memory. Use this for
+                            reports to avoid re-fetching the same days per query.
+                            Ignores --query/--facet-values/--series. Output:
+                            {result:{results:[{id,type,result|error},...]}}.
   --interval <granularity>  hourly | daily | monthly; omit for auto-selection
   --domainkey <key>         Domain key to use directly, bypassing DOMAINKEY_FILE / RUM_ADMIN_KEY lookup
   --output <path>           Write result JSON to file instead of stdout
@@ -691,6 +743,7 @@ Options:
     series: [],
     output: null,
     facetValues: null,
+    batch: null,
     interval: void 0,
     domainKey: void 0
   };
@@ -709,6 +762,8 @@ Options:
       config.series = args[++i].split(",").map((s) => s.trim()).filter(Boolean);
     } else if (arg === "--facet-values" && i + 1 < args.length) {
       config.facetValues = args[++i];
+    } else if (arg === "--batch" && i + 1 < args.length) {
+      config.batch = args[++i];
     } else if (arg === "--interval" && i + 1 < args.length) {
       const v = args[++i];
       if (!VALID_INTERVALS.includes(v)) {
@@ -730,16 +785,46 @@ async function main() {
   console.log("Fetching RUM data...");
   console.log(`Domain: ${config.domain}`);
   console.log(`Date Range: ${config.startDate} to ${config.endDate}`);
-  if (Object.keys(config.query).length > 0) console.log(`Query Filter: ${JSON.stringify(config.query)}`);
-  if (config.facetValues) console.log(`Getting values for facet: ${config.facetValues}`);
-  if (config.series.length > 0) console.log(`Series: ${config.series.join(", ")}`);
+  if (config.batch) console.log(`Batch requests file: ${config.batch}`);
+  if (!config.batch && Object.keys(config.query).length > 0) console.log(`Query Filter: ${JSON.stringify(config.query)}`);
+  if (!config.batch && config.facetValues) console.log(`Getting values for facet: ${config.facetValues}`);
+  if (!config.batch && config.series.length > 0) console.log(`Series: ${config.series.join(", ")}`);
   if (config.interval) console.log(`Interval: ${config.interval}`);
   if (config.domainKey) console.log("Domain key: (provided directly)");
   console.log("");
   try {
     let result;
-    dbg(config.facetValues ? "entering getFacetValues()..." : "entering query()...");
-    if (config.facetValues) {
+    if (config.batch) {
+      dbg("entering runBatch()...");
+      let raw;
+      try {
+        raw = await fsAsync.readFile(config.batch, "utf8");
+      } catch (e) {
+        throw new Error(`Could not read --batch file "${config.batch}": ${e.message}`);
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        throw new Error(`--batch file "${config.batch}" is not valid JSON: ${e.message}`);
+      }
+      // Accept either a bare array or { requests: [...] }.
+      const requests = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.requests) ? parsed.requests : null);
+      if (!requests) {
+        throw new Error(`--batch file must be a JSON array of requests, or an object {"requests":[...]}.`);
+      }
+      console.log(`Batch: ${requests.length} request(s), one fetch`);
+      console.log("");
+      result = await runBatch(
+        config.domain,
+        config.startDate,
+        config.endDate,
+        requests,
+        config.interval,
+        config.domainKey
+      );
+    } else if (config.facetValues) {
+      dbg("entering getFacetValues()...");
       result = await getFacetValues(
         config.domain,
         config.startDate,
@@ -751,6 +836,7 @@ async function main() {
         config.domainKey
       );
     } else {
+      dbg("entering query()...");
       result = await query(
         config.domain,
         config.startDate,
