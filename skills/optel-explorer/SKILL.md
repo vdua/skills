@@ -22,6 +22,7 @@ Load the reference for the task at hand — do not load them all at once.
 | If the user wants… | Read |
 |--------------------|------|
 | General RUM queries — page views, traffic sources, Core Web Vitals (LCP/CLS/INP), clicks, form fills, device/platform breakdowns | [`references/querying.md`](references/querying.md) |
+| A full narrative OpTel report — executive summary, KPIs, CWV, errors, funnel, acquisition, content across all sections | [`references/report-recipe.md`](references/report-recipe.md) |
 | Error analysis — duplicate detection, cross-browser error clustering, similarity reports | [`references/error-analysis.md`](references/error-analysis.md) |
 | Domain-key management — add a key, generate one via Adobe, fix a missing-key error | The **Key Management** section below (inline) |
 

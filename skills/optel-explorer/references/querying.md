@@ -57,7 +57,16 @@ With `--facet-values`:
 ## Execution Rules
 
 - Issue a single CLI call per distinct question. Do not split date windows in the agent — the loader handles long ranges via internal chunking.
-- **Many questions over the SAME window → use `--batch <file>` (one fetch).** Each CLI call re-fetches the whole window; for multi-question workloads (e.g. reports) put all questions in a JSON array `[{id?, query?, facetValues?, series?}, ...]` and run `optel-query <domain> <s> <e> --batch <file>`. The window is fetched and parsed once; every request is answered in-memory. Output: `{result:{results:[{id,type,result|error},...]}}`. A bad request is reported per-item and does not abort the batch.
+- **Many questions over the SAME window → use `--batch <file>` (one fetch).** Each CLI call re-fetches the whole window; for multi-question workloads (e.g. reports) put all questions in a JSON array `[{id?, query?, facetValues?, series?}, ...]` and run `optel-query <domain> <s> <e> --batch <file>`. The window is fetched and parsed once; every request is answered in-memory. Output: `{result:{results:[{id,type,result|error},...]}}` in input order. A bad request is reported per-item and does not abort the batch. Each item: `facetValues` ⇒ a facet request, `series` ⇒ a metrics request, else a plain count; `query` adds filters.
+  ```json
+  [
+    { "id": "pageviews" },
+    { "id": "kpis", "series": ["visits","bounces","engagement"] },
+    { "id": "errors", "query": {"checkpoint":["error"]} },
+    { "id": "error-sources", "query": {"checkpoint":["error"]}, "facetValues": "error" },
+    { "id": "top-urls", "facetValues": "url" }
+  ]
+  ```
 - Always persist output with `--output` under `output/<domain>-<startDate>-<endDate>-<short-slug>/`.
 - For errors: follow the error-analysis workflow in [`error-analysis.md`](error-analysis.md) (mandatory when reporting errors to the user).
 - Do not modify existing code; stop and report if a change would be needed.
@@ -103,7 +112,7 @@ Build the **smallest** query that answers the question. Expand only when the use
 
 1. Run `date +%Y-%m-%d` — never hardcode today's date
 2. Default end date: **yesterday** (avoid incomplete same-day data)
-3. Default range: **last 7 days** when not specified
+3. Default range: **last 30 days** when not specified
 4. Format: always `YYYY-MM-DD`
 
 | User says | Interpretation |
