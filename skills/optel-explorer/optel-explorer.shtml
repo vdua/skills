@@ -1,189 +1,323 @@
-<link rel="icon" href="key-round" />
-<div data-sprinkle-autoopen data-sprinkle-title="OpTel Explorer"></div>
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="icon" href="key-round" />
+  <title>OpTel Explorer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-<div class="sprinkle-stack">
-  <h2 class="sprinkle-heading">RUM Domain Keys</h2>
-  <p class="sprinkle-detail">Manage domain keys for Operational Telemetry queries</p>
+    body {
+      font-family: inherit;
+      background: var(--s2-bg-base, #f5f5f5);
+      color: var(--s2-content-default, #222);
+      font-size: 14px;
+      padding: 16px;
+    }
 
-  <!-- Section 1: Configured Domains -->
-  <div class="sprinkle-card">
-    <div class="sprinkle-stack">
-      <div class="sprinkle-row" style="justify-content:space-between;align-items:center">
-        <h3 class="sprinkle-heading--s">Configured Domains</h3>
-        <button class="sprinkle-btn sprinkle-btn--secondary" id="btn-refresh" onclick="loadDomains()">
-          <i data-lucide="refresh-cw" class="sprinkle-icon"></i> Refresh
-        </button>
-      </div>
-      <div id="domain-list"><div class="sprinkle-empty-state">Loading...</div></div>
+    .header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .header h1 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--s2-content-default, #222);
+    }
+    .header p {
+      font-size: 12px;
+      color: var(--s2-content-secondary, #666);
+      margin-top: 2px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    thead th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--s2-content-secondary, #888);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0 8px 8px 8px;
+      border-bottom: 1px solid var(--s2-border-default, rgba(0,0,0,0.1));
+    }
+    tbody tr {
+      border-bottom: 1px solid var(--s2-border-default, rgba(0,0,0,0.06));
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td {
+      padding: 8px;
+      vertical-align: middle;
+    }
+
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid var(--s2-border-default, rgba(0,0,0,0.2));
+      border-radius: 6px;
+      background: var(--s2-bg-elevated, #fff);
+      color: var(--s2-content-default, #222);
+      font-size: 13px;
+      outline: none;
+    }
+    input:focus {
+      border-color: var(--s2-accent, #0d66d0);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 12px;
+      border-radius: 9999px;
+      border: 1px solid transparent;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-primary {
+      background: var(--s2-accent, #0d66d0);
+      color: var(--s2-gray-25, #fafafa);
+      border-color: var(--s2-accent, #0d66d0);
+    }
+    .btn-secondary {
+      background: transparent;
+      color: var(--s2-content-default, #222);
+      border-color: var(--s2-border-default, rgba(0,0,0,0.2));
+    }
+    .btn-secondary:hover {
+      background: var(--s2-bg-elevated, rgba(0,0,0,0.05));
+    }
+    .btn-remove {
+      background: transparent;
+      border: none;
+      color: var(--s2-content-secondary, #888);
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .btn-remove:hover { color: var(--s2-negative, #d7373f); }
+
+    .section-divider {
+      border: none;
+      border-top: 1px solid var(--s2-border-default, rgba(0,0,0,0.1));
+      margin: 20px 0;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--s2-content-default, #222);
+      margin-bottom: 10px;
+    }
+    .section-detail {
+      font-size: 12px;
+      color: var(--s2-content-secondary, #888);
+      margin-bottom: 10px;
+    }
+
+    .row { display: flex; gap: 8px; align-items: center; }
+
+    .empty {
+      font-size: 13px;
+      color: var(--s2-content-secondary, #888);
+      padding: 12px 8px;
+      text-align: center;
+    }
+
+    .status {
+      font-size: 12px;
+      padding: 4px 0;
+      min-height: 20px;
+    }
+
+    .masked {
+      color: var(--s2-content-secondary, #aaa);
+      letter-spacing: 0.12em;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>RUM Domain Keys</h1>
+      <p>Operational Telemetry key management</p>
+    </div>
+    <button class="btn btn-secondary" id="btn-refresh" onclick="loadDomains()">Refresh</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Domain</th>
+        <th>Key</th>
+        <th style="width:40px"></th>
+      </tr>
+    </thead>
+    <tbody id="domain-tbody">
+      <tr id="add-row">
+        <td><input type="text" id="add-domain" placeholder="example.com" /></td>
+        <td><input type="password" id="add-key" placeholder="secret key" /></td>
+        <td><button class="btn btn-primary" id="btn-add" onclick="addKey()">Add</button></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div id="domain-empty" class="empty" style="display:none">No domain keys configured yet</div>
+
+  <div id="gen-section" style="display:none">
+    <hr class="section-divider" />
+    <p class="section-title">Generate via Adobe</p>
+    <p class="section-detail">You are signed in with Adobe. Generate a key automatically.</p>
+    <div class="row">
+      <input type="text" id="gen-domain" placeholder="example.com" style="flex:1" />
+      <button class="btn btn-primary" id="btn-gen" onclick="generateKey()">Generate Key</button>
     </div>
   </div>
 
-  <div class="sprinkle-divider"></div>
-
-  <!-- Section 2: Add Domain Key -->
-  <div class="sprinkle-card">
-    <div class="sprinkle-stack">
-      <h3 class="sprinkle-heading--s">Add Domain Key</h3>
-      <input type="text" id="add-domain" class="sprinkle-text-field" placeholder="example.com" />
-      <input type="password" id="add-key" class="sprinkle-text-field" placeholder="Domain key (secret)" />
-      <button class="sprinkle-btn sprinkle-btn--primary" id="btn-add" onclick="addKey()">
-        <i data-lucide="plus" class="sprinkle-icon"></i> Add Key
-      </button>
-    </div>
-  </div>
-
-  <div class="sprinkle-divider"></div>
-
-  <!-- Section 3: Generate Key via Adobe -->
-  <div class="sprinkle-card">
-    <div class="sprinkle-stack">
-      <h3 class="sprinkle-heading--s">Generate Key via Adobe</h3>
-      <input type="text" id="gen-domain" class="sprinkle-text-field" placeholder="example.com" />
-      <button class="sprinkle-btn sprinkle-btn--primary" id="btn-gen" onclick="generateKey()">
-        <i data-lucide="key-round" class="sprinkle-icon"></i> Generate Key on Adobe
-      </button>
-      <p class="sprinkle-detail">Requires https://aemcs-workspace.adobe.com to be open and logged in. Automation will call the Adobe RUM API and save the key.</p>
-    </div>
-  </div>
-
-  <!-- Status -->
-  <div id="status-message" hidden></div>
-</div>
+  <div id="status-msg" class="status"></div>
 
 <script>
-  function renderDomainList(domains) {
-    var container = document.getElementById('domain-list');
-    if (!domains || domains.length === 0) {
-      container.innerHTML = '<div class="sprinkle-empty-state">No domains configured yet</div>';
-    } else {
-      var html = '<div class="sprinkle-stack">';
-      domains.forEach(function(domain) {
-        html += '<div class="sprinkle-row" style="justify-content:space-between;align-items:center">'
-              + '<span class="sprinkle-status-light sprinkle-status-light--positive">' + escHtml(domain) + '</span>'
-              + '<button class="sprinkle-btn sprinkle-btn--negative" '
-              + "onclick=\"removeKey('" + escJs(domain) + "')\">Remove</button>"
-              + '</div>';
-      });
-      html += '</div>';
-      container.innerHTML = html;
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escJs(s) {
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+}
+
+function renderDomainList(domains) {
+  var tbody = document.getElementById('domain-tbody');
+  var old = tbody.querySelectorAll('tr.domain-row');
+  for (var i = 0; i < old.length; i++) old[i].remove();
+
+  var empty = document.getElementById('domain-empty');
+  if (!domains || domains.length === 0) {
+    empty.style.display = '';
+  } else {
+    empty.style.display = 'none';
+    for (var j = 0; j < domains.length; j++) {
+      var d = domains[j];
+      var tr = document.createElement('tr');
+      tr.className = 'domain-row';
+      tr.innerHTML = '<td>' + escHtml(d) + '</td>'
+        + '<td><span class="masked">\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022</span></td>'
+        + '<td><button class="btn-remove" title="Remove" onclick="removeKey(\'' + escJs(d) + '\')">\u00d7</button></td>';
+      tbody.appendChild(tr);
     }
-    if (typeof LucideIcons !== 'undefined' && LucideIcons.render) LucideIcons.render();
   }
+}
 
-  function escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  }
-
-  // Escape a domain for safe embedding inside an onclick="removeKey('...')" attribute:
-  // backslash-escape single quotes, then HTML-escape so the double-quoted attribute stays intact.
-  function escJs(s) {
-    return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/&/g,'&amp;').replace(/"/g,'&quot;');
-  }
-
-  function loadDomains() {
-    setLoading('btn-refresh', true);
-    slicc.readFile('/optel/domainkey.json').then(function(text) {
-      setLoading('btn-refresh', false);
-      if (!text || !text.trim()) {
-        renderDomainList([]);
-        return;
-      }
-      try {
-        var data = JSON.parse(text);
-        renderDomainList(Object.keys(data));
-      } catch (e) {
-        showStatus('Could not parse domainkey.json: ' + e.message, 'negative');
-        renderDomainList([]);
-      }
-    }).catch(function(err) {
-      // File missing or unreadable — treat as no domains configured
-      setLoading('btn-refresh', false);
+function loadDomains() {
+  alert('test1')
+  var btn = document.getElementById('btn-refresh');
+  if (btn) { btn.disabled = true; btn.textContent = '\u2026'; }
+  slicc.readFile('/optel/domainkey.json').then(function(text) {
+    if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+    if (!text || !text.trim()) { renderDomainList([]); return; }
+    try {
+      renderDomainList(Object.keys(JSON.parse(text)));
+    } catch(e) {
+      showStatus('Could not parse domainkey.json: ' + e.message, 'error');
       renderDomainList([]);
-    });
-  }
-
-  function addKey() {
-    var domain = document.getElementById('add-domain').value.trim();
-    var key    = document.getElementById('add-key').value.trim();
-    if (!domain || !key) {
-      showStatus('Please enter both domain and key.', 'notice');
-      return;
     }
-    setLoading('btn-add', true);
-    slicc.exec.spawn(['optel-explorer', 'add-domain-key', domain, key]).then(function(result) {
-      setLoading('btn-add', false);
-      if (result.exitCode === 0) {
-        document.getElementById('add-domain').value = '';
-        document.getElementById('add-key').value = '';
-        loadDomains();
-        showStatus('Domain key added.', 'positive');
-      } else {
-        showStatus(result.stderr || result.stdout || 'Failed to add key.', 'negative');
-      }
-    });
-  }
+  }).catch(function() {
+    showStatus('Could not load domain keys.', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+    renderDomainList([]);
+  });
+}
 
-  function removeKey(domain) {
-    // Route through the CLI, which truncates the key store safely (slicc.writeFile
-    // does not reliably truncate an in-place overwrite and corrupted the file).
-    slicc.exec.spawn(['optel-explorer', 'remove-domain-key', domain]).then(function(result) {
-      if (result.exitCode === 0) {
-        loadDomains();
-        showStatus('Removed ' + domain + '.', 'positive');
-      } else {
-        showStatus(result.stderr || result.stdout || ('Could not remove ' + domain), 'negative');
-      }
-    }).catch(function(err) {
-      showStatus('Could not remove ' + domain + ': ' + (err && err.message ? err.message : err), 'negative');
-    });
-  }
-
-  function generateKey() {
-    var domain = document.getElementById('gen-domain').value.trim();
-    if (!domain) {
-      showStatus('Please enter a domain.', 'notice');
-      return;
+function addKey() {
+  var domain = document.getElementById('add-domain').value.trim();
+  var key = document.getElementById('add-key').value.trim();
+  if (!domain || !key) { showStatus('Enter both domain and key.', 'warn'); return; }
+  setLoading('btn-add', true);
+  slicc.exec.spawn(['optel-explorer', 'add-domain-key', domain, key]).then(function(r) {
+    setLoading('btn-add', false);
+    if (r.exitCode === 0) {
+      document.getElementById('add-domain').value = '';
+      document.getElementById('add-key').value = '';
+      loadDomains();
+      showStatus('Domain key added.', 'ok');
+    } else {
+      showStatus(r.stderr || r.stdout || 'Failed to add key.', 'error');
     }
-    setLoading('btn-gen', true);
-    showStatus('Calling Adobe RUM API for ' + domain + '...', 'informative');
-    slicc.exec.spawn(['optel-explorer', 'generate', domain]).then(function(result) {
-      setLoading('btn-gen', false);
-      if (result.exitCode === 0) {
-        document.getElementById('gen-domain').value = '';
-        loadDomains();
-        showStatus('Key generated and saved for ' + domain + '.', 'positive');
-      } else {
-        showStatus(result.stderr || result.stdout || 'Key generation failed.', 'negative');
-      }
-    });
-  }
+  });
+}
 
-  function setLoading(btnId, loading) {
-    var btn = document.getElementById(btnId);
-    if (!btn) return;
-    btn.disabled = loading;
-    btn.style.opacity = loading ? '0.6' : '';
-  }
+function removeKey(domain) {
+  slicc.exec.spawn(['optel-explorer', 'remove-domain-key', domain]).then(function(r) {
+    if (r.exitCode === 0) {
+      loadDomains();
+      showStatus('Removed ' + domain + '.', 'ok');
+    } else {
+      showStatus(r.stderr || r.stdout || 'Could not remove ' + domain, 'error');
+    }
+  }).catch(function(err) {
+    showStatus('Could not remove ' + domain + ': ' + (err && err.message ? err.message : String(err)), 'error');
+  });
+}
 
-  function showStatus(message, variant) {
-    var el = document.getElementById('status-message');
-    var cls = 'sprinkle-badge sprinkle-badge--' + (
-      variant === 'positive'    ? 'positive' :
-      variant === 'negative'    ? 'negative' :
-      variant === 'notice'      ? 'notice'   : 'informative'
-    );
-    el.innerHTML = '<span class="' + cls + '">' + escHtml(message) + '</span>';
-    el.hidden = false;
-    clearTimeout(el._t);
-    el._t = setTimeout(function() { el.hidden = true; }, 5000);
-  }
+function generateKey() {
+  var domain = document.getElementById('gen-domain').value.trim();
+  if (!domain) { showStatus('Enter a domain.', 'warn'); return; }
+  setLoading('btn-gen', true);
+  showStatus('Calling Adobe RUM API for ' + domain + '\u2026', 'info');
+  slicc.exec.spawn(['optel-explorer', 'generate', domain]).then(function(r) {
+    setLoading('btn-gen', false);
+    if (r.exitCode === 0) {
+      document.getElementById('gen-domain').value = '';
+      loadDomains();
+      showStatus('Key generated and saved for ' + domain + '.', 'ok');
+    } else {
+      showStatus(r.stderr || r.stdout || 'Key generation failed.', 'error');
+    }
+  });
+}
 
-  // Expose handlers on window so inline onclick attributes (static + injected) resolve them
-  window.loadDomains  = loadDomains;
-  window.addKey       = addKey;
-  window.generateKey  = generateKey;
-  window.removeKey    = removeKey;
+function setLoading(id, on) {
+  var b = document.getElementById(id);
+  if (b) { b.disabled = on; b.style.opacity = on ? '0.5' : ''; }
+}
 
-  // Load on mount — direct VFS read, no lick
-  loadDomains();
+function showStatus(msg, type) {
+  var el = document.getElementById('status-msg');
+  var color = type === 'ok' ? 'var(--s2-positive, #1a8a37)'
+    : type === 'error' ? 'var(--s2-negative, #d7373f)'
+    : type === 'warn' ? 'var(--s2-notice, #cb6f10)'
+    : 'var(--s2-content-secondary, #666)';
+  el.innerHTML = '<span style="color:' + color + '">' + escHtml(msg) + '</span>';
+  clearTimeout(el._t);
+  el._t = setTimeout(function() { el.innerHTML = ''; }, 5000);
+}
+
+function checkAdobeLogin() {
+  slicc.exec('oauth-token adobe 2>/dev/null | head -c 5').then(function(r) {
+    if (r.exitCode === 0 && r.stdout && r.stdout.trim().length > 0) {
+      document.getElementById('gen-section').style.display = '';
+    }
+  }).catch(function() {});
+}
+
+window.loadDomains = loadDomains;
+window.addKey = addKey;
+window.removeKey = removeKey;
+window.generateKey = generateKey;
+
+loadDomains();
+checkAdobeLogin();
 </script>
+</body>
+</html>
